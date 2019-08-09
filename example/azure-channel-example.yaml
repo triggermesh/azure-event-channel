@@ -1,0 +1,6 @@
+apiVersion: messaging.triggermesh.dev/v1alpha1
+kind: AzureChannel
+metadata:
+  name: azure-test
+spec:
+  azure-conn-str: "conn string"

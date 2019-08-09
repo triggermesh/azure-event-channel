@@ -1,0 +1,4 @@
+vendor
+.vscode
+-azure-controller
+azurecrd
