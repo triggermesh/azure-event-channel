@@ -18,7 +18,7 @@ package util
 
 import (
 	"context"
-	"github.com/Azure/azure-event-hubs-go/v2"
+	"github.com/Azure/azure-event-hubs-go"
 )
 
 //Describe describes specified event hub
