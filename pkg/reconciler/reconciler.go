@@ -60,7 +60,7 @@ func NewOptionsOrDie(cfg *rest.Config, logger *zap.SugaredLogger, stopCh <-chan 
 		KubeClientSet:    kubeClient,
 		DynamicClientSet: dynamicClient,
 		ConfigMapWatcher: configMapWatcher,
-		AzureClientSet: azureClient,
+		AzureClientSet:   azureClient,
 		Logger:           logger,
 		ResyncPeriod:     10 * time.Hour, // Based on controller-runtime default.
 		StopChannel:      stopCh,
@@ -142,7 +142,7 @@ func NewBase(opt Options, controllerAgentName string) *Base {
 	base := &Base{
 		KubeClientSet:    opt.KubeClientSet,
 		DynamicClientSet: opt.DynamicClientSet,
-		AzureClientSet: opt.AzureClientSet,
+		AzureClientSet:   opt.AzureClientSet,
 		ConfigMapWatcher: opt.ConfigMapWatcher,
 		Recorder:         recorder,
 		StatsReporter:    statsReporter,

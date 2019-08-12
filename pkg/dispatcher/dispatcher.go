@@ -27,7 +27,6 @@ import (
 	"github.com/knative/eventing/pkg/provisioners"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
-	"github.com/triggermesh/azure-event-channel/pkg/util"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"sync"

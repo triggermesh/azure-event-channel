@@ -204,15 +204,15 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 	// See if the channel has been deleted.
 	if kc.DeletionTimestamp != nil {
 		if kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsTrue() {
-			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.AccountCreds, metav1.GetOptions{})
+			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.EventHubName, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
-			hubManager, hub, err := r.hubClients(kc.Spec.StreamName, kc.Spec.AccountRegion, creds)
+			hubManager, _, err := r.hubClients(creds)
 			if err != nil {
 				return err
 			}
-			if err := r.removeAzureHub(ctx, kc.Spec.StreamName, hub); err != nil {
+			if err := r.removeAzureHub(ctx, kc.Spec.EventHubName, hubManager); err != nil {
 				return err
 			}
 		}
@@ -288,15 +288,15 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 
 	if kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsUnknown() ||
 		kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsFalse() {
-		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.AccountCreds, metav1.GetOptions{})
+		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.EventHubName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		hubManager, hub, err := r.hubClients(kc.Spec.EventHubName, creds)
+		hubManager, _, err := r.hubClients(creds)
 		if err != nil {
 			return err
 		}
-		if err := r.setupAzureHub(ctx, kc.Spec.EventHubName, hub); err != nil {
+		if err := r.setupAzureHub(ctx, kc.Spec.EventHubName, hubManager); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(time.Duration(3 * time.Minute))
@@ -307,11 +307,15 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			return fmt.Errorf("Stream didn't switch to active state in time")
 		default:
 			for {
-				res, err := util.Describe(ctx, hub, kc.Spec.EventHubName)
+				res, err := util.Describe(ctx, hubManager, kc.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
-				if *res.StreamDescription.StreamStatus == azure.StreamStatusActive {
+				// Available 1
+				// Limited 2
+				// Restoring 3
+				// Unknown 0
+				if *res.EntityAvailabilityStatus == "Available" {
 					break
 				}
 				time.Sleep(time.Second)
@@ -342,9 +346,10 @@ func (r *Reconciler) reconcileChannelService(ctx context.Context, channel *v1alp
 				return nil, err
 			}
 			return svc, nil
-		} else {
-			logger.Error("Unable to get the channel service", zap.Error(err))
 		}
+
+		logger.Error("Unable to get the channel service", zap.Error(err))
+
 		return nil, err
 	}
 	// Check to make sure that the AzureChannel owns this service and if not, complain.
@@ -381,7 +386,7 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	return new, err
 }
 
-func (r *Reconciler) hubClients(hub string, creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
+func (r *Reconciler) hubClients(creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
 	if creds == nil {
 		return nil, nil, fmt.Errorf("Credentials data is nil")
 	}
@@ -392,27 +397,27 @@ func (r *Reconciler) hubClients(hub string, creds *corev1.Secret) (*eventhub.Hub
 
 	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub manager ", err)
+		return nil, nil, fmt.Errorf("Could not create new hub manager %v", err)
 	}
 
 	hub, err := eventhub.NewHubFromConnectionString(string(connStr))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub ", err)
+		return nil, nil, fmt.Errorf("Could not create new hub %v", err)
 	}
 
 	return hubManager, hub, nil
 }
 
-func (r *Reconciler) setupAzureHub(ctx context.Context, stream string, hubClient *eventhub.Hub) error {
-	if _, err := util.Describe(ctx, hubClient, stream); err == nil {
+func (r *Reconciler) setupAzureHub(ctx context.Context, hub string, hubManagerClient *eventhub.HubManager) error {
+	if _, err := util.Describe(ctx, hubManagerClient, hub); err == nil {
 		return nil
 	}
-	return util.Create(ctx, hubClient, stream)
+	return util.Create(ctx, hubManagerClient, hub)
 }
 
-func (r *Reconciler) removeAzureHub(ctx context.Context, stream string, hubClient *eventhub.Hub) error {
-	if _, err := util.Describe(ctx, hubClient, stream); err != nil {
+func (r *Reconciler) removeAzureHub(ctx context.Context, hub string, hubManagerClient *eventhub.HubManager) error {
+	if _, err := util.Describe(ctx, hubManagerClient, hub); err != nil {
 		return nil
 	}
-	return util.Delete(ctx, hubClient, stream)
+	return util.Delete(ctx, hubManagerClient, hub)
 }

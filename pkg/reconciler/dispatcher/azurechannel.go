@@ -154,7 +154,7 @@ func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.Azure
 	}
 
 	if !r.azureDispatcher.AzureSessionExist(ctx, azureChannel) {
-		secret, err := r.KubeClientSet.CoreV1().Secrets(azureChannel.Namespace).Get(azureChannel.Spec.AccountCreds, metav1.GetOptions{})
+		secret, err := r.KubeClientSet.CoreV1().Secrets(azureChannel.Namespace).Get(azureChannel.Spec.EventHubName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}

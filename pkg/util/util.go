@@ -30,3 +30,9 @@ func Describe(ctx context.Context, client *eventhub.HubManager, eventHubName str
 func Delete(ctx context.Context, client *eventhub.HubManager, eventHubName string) error {
 	return client.Delete(ctx, eventHubName)
 }
+
+//Create creates Azure Event Hub with selected Name
+func Create(ctx context.Context, client *eventhub.HubManager, eventHubName string) error {
+	_, err := client.Put(ctx, eventHubName)
+	return err
+}
