@@ -16,6 +16,7 @@ require (
 	github.com/markbates/inflect v1.0.4 // indirect
 	github.com/mattbaird/jsonpatch v0.0.0-20171005235357-81af80346b1a // indirect
 	github.com/openzipkin/zipkin-go v0.2.0 // indirect
+	github.com/pierrec/lz4 v2.0.5+incompatible // indirect
 	go.opencensus.io v0.22.0
 	go.uber.org/atomic v1.4.0 // indirect
 	go.uber.org/multierr v1.1.0 // indirect

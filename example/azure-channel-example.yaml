@@ -3,4 +3,4 @@ kind: AzureChannel
 metadata:
   name: azure-test
 spec:
-  azure-conn-str: "conn string"
+  event_hub_name: "triggermesh"
