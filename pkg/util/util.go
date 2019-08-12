@@ -19,34 +19,14 @@ package util
 import (
 	"context"
 	"github.com/Azure/azure-event-hubs-go/v2"
-	"go.uber.org/zap"
-
-	mgmt "github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub"
 )
 
-// Connect creates a new Azure Event Hub client
-func Connect(subID string, logger *zap.SugaredLogger) *mgmt.EventHubsClient {
-	client := mgmt.NewEventHubsClient(subID)
-	return &client
-}
-
 //Describe describes specified event hub
-func Describe(ctx context.Context, client mgmt.EventHubsClient, resGroupName, namespcName, eventHubName string) (mgmt.Model, error) {
-	return client.Get(ctx, resGroupName, namespcName, eventHubName)
-}
-
-//Create creates or updates Event Hub with specified parameters
-func Create(ctx context.Context, client mgmt.EventHubsClient, resGroupName, namespcName, eventHubName string) error {
-	_, err := client.CreateOrUpdate(ctx, resGroupName, namespcName, eventHubName, mgmt.Model{})
-	return err
+func Describe(ctx context.Context, client *eventhub.HubManager, eventHubName string) (*eventhub.HubEntity, error) {
+	return client.Get(ctx, eventHubName)
 }
 
 //Delete removes Azure Event Hub with selected Name
-func Delete(ctx context.Context, manager *eventhub.HubManager, azureEventHubName string) error {
-	return manager.Delete(ctx, azureEventHubName)
-}
-
-// Publish publishes event to Azure Event Hub
-func Publish(ctx context.Context, hub *eventhub.Hub, msg []byte, logger *zap.SugaredLogger) error {
-	return hub.Send(ctx, eventhub.NewEvent(msg))
+func Delete(ctx context.Context, client *eventhub.HubManager, eventHubName string) error {
+	return client.Delete(ctx, eventHubName)
 }

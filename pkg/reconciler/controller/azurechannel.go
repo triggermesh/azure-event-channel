@@ -22,7 +22,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com//-sdk-go/service/azure"
+	"github.com/Azure/azure-event-hubs-go/v2"
 
 	"github.com/knative/eventing/pkg/logging"
 	"github.com/knative/eventing/pkg/reconciler/names"
@@ -31,9 +31,9 @@ import (
 	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
 	messaginginformers "github.com/triggermesh/azure-event-channel/pkg/client/informers/externalversions/messaging/v1alpha1"
 	listers "github.com/triggermesh/azure-event-channel/pkg/client/listers/messaging/v1alpha1"
-	"github.com/triggermesh/azure-event-channel/pkg/util"
 	"github.com/triggermesh/azure-event-channel/pkg/reconciler"
 	"github.com/triggermesh/azure-event-channel/pkg/reconciler/controller/resources"
+	"github.com/triggermesh/azure-event-channel/pkg/util"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -72,10 +72,10 @@ type Reconciler struct {
 
 	azurechannelLister   listers.AzureChannelLister
 	azurechannelInformer cache.SharedIndexInformer
-	deploymentLister       appsv1listers.DeploymentLister
-	serviceLister          corev1listers.ServiceLister
-	endpointsLister        corev1listers.EndpointsLister
-	impl                   *controller.Impl
+	deploymentLister     appsv1listers.DeploymentLister
+	serviceLister        corev1listers.ServiceLister
+	endpointsLister      corev1listers.EndpointsLister
+	impl                 *controller.Impl
 }
 
 var (
@@ -107,8 +107,8 @@ func NewController(
 		dispatcherNamespace:      dispatcherNamespace,
 		dispatcherDeploymentName: dispatcherDeploymentName,
 		dispatcherServiceName:    dispatcherServiceName,
-		azurechannelLister:     azurechannelInformer.Lister(),
-		azurechannelInformer:   azurechannelInformer.Informer(),
+		azurechannelLister:       azurechannelInformer.Lister(),
+		azurechannelInformer:     azurechannelInformer.Informer(),
 		deploymentLister:         deploymentInformer.Lister(),
 		serviceLister:            serviceInformer.Lister(),
 		endpointsLister:          endpointsInformer.Lister(),
@@ -208,11 +208,11 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			if err != nil {
 				return err
 			}
-			kclient, err := r.azureClient(kc.Spec.StreamName, kc.Spec.AccountRegion, creds)
+			hubManager, hub, err := r.hubClients(kc.Spec.StreamName, kc.Spec.AccountRegion, creds)
 			if err != nil {
 				return err
 			}
-			if err := r.removeAzureStream(ctx, kc.Spec.StreamName, kclient); err != nil {
+			if err := r.removeAzureHub(ctx, kc.Spec.StreamName, hub); err != nil {
 				return err
 			}
 		}
@@ -292,11 +292,11 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 		if err != nil {
 			return err
 		}
-		kclient, err := r.azureClient(kc.Spec.StreamName, kc.Spec.AccountRegion, creds)
+		hubManager, hub, err := r.hubClients(kc.Spec.EventHubName, creds)
 		if err != nil {
 			return err
 		}
-		if err := r.setupAzureStream(ctx, kc.Spec.StreamName, kclient); err != nil {
+		if err := r.setupAzureHub(ctx, kc.Spec.EventHubName, hub); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(time.Duration(3 * time.Minute))
@@ -307,7 +307,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			return fmt.Errorf("Stream didn't switch to active state in time")
 		default:
 			for {
-				res, err := util.Describe(ctx, kclient, kc.Spec.StreamName)
+				res, err := util.Describe(ctx, hub, kc.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
@@ -381,31 +381,38 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	return new, err
 }
 
-func (r *Reconciler) azureClient(stream, region string, creds *corev1.Secret) (*azure.Azure, error) {
+func (r *Reconciler) hubClients(hub string, creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return nil, nil, fmt.Errorf("Credentials data is nil")
 	}
-	keyID, present := creds.Data["_access_key_id"]
+	connStr, present := creds.Data["_connection_string"]
 	if !present {
-		return nil, fmt.Errorf("\"_access_key_id\" secret key is missing")
+		return nil, nil, fmt.Errorf("\"_connection_string\" key is missing")
 	}
-	secret, present := creds.Data["_secret_access_key"]
-	if !present {
-		return nil, fmt.Errorf("\"_secret_access_key\" secret key is missing")
+
+	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Could not create new hub manager ", err)
 	}
-	return util.Connect(string(keyID), string(secret), region, r.Logger)
+
+	hub, err := eventhub.NewHubFromConnectionString(string(connStr))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Could not create new hub ", err)
+	}
+
+	return hubManager, hub, nil
 }
 
-func (r *Reconciler) setupAzureStream(ctx context.Context, stream string, azureClient *azure.Azure) error {
-	if _, err := util.Describe(ctx, azureClient, stream); err == nil {
+func (r *Reconciler) setupAzureHub(ctx context.Context, stream string, hubClient *eventhub.Hub) error {
+	if _, err := util.Describe(ctx, hubClient, stream); err == nil {
 		return nil
 	}
-	return util.Create(ctx, azureClient, stream)
+	return util.Create(ctx, hubClient, stream)
 }
 
-func (r *Reconciler) removeAzureStream(ctx context.Context, stream string, azureClient *azure.Azure) error {
-	if _, err := util.Describe(ctx, azureClient, stream); err != nil {
+func (r *Reconciler) removeAzureHub(ctx context.Context, stream string, hubClient *eventhub.Hub) error {
+	if _, err := util.Describe(ctx, hubClient, stream); err != nil {
 		return nil
 	}
-	return util.Delete(ctx, azureClient, stream)
+	return util.Delete(ctx, hubClient, stream)
 }

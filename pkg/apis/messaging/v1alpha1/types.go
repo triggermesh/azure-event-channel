@@ -38,11 +38,9 @@ type AzureChannel struct {
 
 // AzureChannelSpec is the spec for a AzureChannel resource
 type AzureChannelSpec struct {
-	Subscribable      *eventingduck.Subscribable `json:"subscribable,omitempty"`
-	SubscriptionID    string                     `json:"subscription_id"`
-	ResourceGroupName string                     `json:"resource_group_name"`
-	NamespaceName     string                     `json:"namespace_name"`
-	EventHubName      string                     `json:"event_hub_name"`
+	Subscribable     *eventingduck.Subscribable `json:"subscribable,omitempty"`
+	ConnectionString string                     `json:"connection_string"`
+	EventHubName     string                     `json:"event_hub_name"`
 }
 
 // AzureChannelStatus is the status for a AzureChannel resource

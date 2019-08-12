@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Azure/azure-event-hubs-go/v2"
-	mgmt "github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub"
 	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
 	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
 	"github.com/knative/eventing/pkg/logging"
@@ -50,15 +49,9 @@ type SubscriptionsSupervisor struct {
 }
 
 type azurehub struct {
-	Name   string
-	Client *eventhub.Hub
-}
-
-type headers map[string]string
-
-type data struct {
-	Headers headers `json:"headers"`
-	Payload string  `json:"payload"`
+	Name             string
+	hubClient        *eventhub.Hub
+	hubManagerClient *eventhub.HubManager
 }
 
 // NewDispatcher returns a new SubscriptionsSupervisor.
@@ -97,7 +90,7 @@ func createReceiverFunction(ctx context.Context, s *SubscriptionsSupervisor, log
 			logger.Errorf("Azure session not initialized")
 			return err
 		}
-		if err := util.Publish(ctx, hc.Client, message, logger); err != nil {
+		if err := hc.hubClient.Send(ctx, eventhub.NewEvent(message)); err != nil {
 			logger.Errorf("Error during publish: %v", err)
 			return err
 		}
@@ -175,58 +168,36 @@ func (s *SubscriptionsSupervisor) UpdateSubscriptions(ctx context.Context, chann
 }
 
 func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisioners.ChannelReference, subscription subscriptionReference) error {
-	s.logger.Info("Subscribe to channel:", zap.Any("channel", channel), zap.Any("subscription", subscription))
+	s.logger.Info("Subscribe to eventhub:", zap.Any("channel", channel), zap.Any("subscription", subscription))
 
-	// THIS IS THE CODE I NEED TO CHANGE
-	// session, present := s.azureSessions[channel]
-	// if !present {
-	// 	s.logger.Error("Azure session not found:", zap.Any("channel", channel))
-	// 	return fmt.Errorf("Azure session for channel %q not found", channel.String())
-	// }
-	// iterator, err := util.GetShardIterator(ctx, session.Client, &session.StreamName)
-	// if err != nil {
-	// 	s.logger.Error("Azure shard iterator request error:", zap.Error(err))
-	// 	return fmt.Errorf("Azure shard iterator request error: %s", err)
-	// }
-	// go func(nextRecord *string, channel provisioners.ChannelReference, subscription subscriptionReference) {
-	// 	var message data
-	// 	for {
-	// 		if _, exist := s.subscriptions[channel][subscription]; !exist {
-	// 			s.logger.Info("Subscription not found, exiting")
-	// 			return
-	// 		}
-	// 		if nextRecord == nil {
-	// 			s.logger.Info("Null shard iterator, stop subscriber process. Is the stream closed?")
-	// 			return
-	// 		}
-	// 		record, err := util.GetRecord(session.Client, nextRecord)
-	// 		if err != nil {
-	// 			s.logger.Error("Error reading Azure stream message:", zap.Error(err))
-	// 			continue
-	// 		}
-	// 		nextRecord = record.NextShardIterator
-	// 		if len(record.Records) == 0 {
-	// 			continue
-	// 		}
-	// 		if err := json.Unmarshal(record.Records[0].Data, &message); err != nil {
-	// 			s.logger.Error("Error decoding message:", zap.Error(err))
-	// 			continue
-	// 		}
-	// 		payload, err := base64.StdEncoding.DecodeString(message.Payload)
-	// 		if err != nil {
-	// 			s.logger.Error("Error decoding payload:", zap.Error(err))
-	// 			continue
-	// 		}
-	// 		if err := s.dispatcher.DispatchMessage(&provisioners.Message{
-	// 			Headers: message.Headers,
-	// 			Payload: payload,
-	// 		}, subscription.SubscriberURI, subscription.ReplyURI, provisioners.DispatchDefaults{
-	// 			Namespace: channel.Namespace,
-	// 		}); err != nil {
-	// 			s.logger.Error("Message dispatching error:", zap.Error(err))
-	// 		}
-	// 	}
-	// }(iterator.ShardIterator, channel, subscription)
+	session, present := s.azureSessions[channel]
+	if !present {
+		s.logger.Error("Azure session not found:", zap.Any("channel", channel))
+		return fmt.Errorf("Azure session for channel %q not found", channel.String())
+	}
+
+	handler := func(c context.Context, event *eventhub.Event) error {
+		s.logger.Info("New event!", zap.Any("data", string(event.Data)))
+
+		return s.dispatcher.DispatchMessage(&provisioners.Message{
+			Payload: event.Data,
+		}, subscription.SubscriberURI, subscription.ReplyURI, provisioners.DispatchDefaults{
+			Namespace: channel.Namespace,
+		})
+	}
+
+	// listen to each partition of the Event Hub
+	runtimeInfo, err := session.hubClient.GetRuntimeInformation(ctx)
+	if err != nil {
+		return fmt.Errorf("GetRuntimeInformation failed: ", err)
+	}
+
+	for _, partitionID := range runtimeInfo.PartitionIDs {
+		_, err := session.hubClient.Receive(ctx, partitionID, handler, eventhub.ReceiveWithLatestOffset())
+		if err != nil {
+			s.logger.Error("Receive func failed:", zap.Any("partitionID", partitionID), zap.Any("error", err))
+		}
+	}
 	return nil
 }
 
@@ -287,14 +258,16 @@ func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channe
 	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
 	_, present := s.azureSessions[cRef]
 	if !present {
-		client, err := s.azureClient(secret)
+		hubManager, hub, err := s.newClients(secret)
 		if err != nil {
 			logger.Errorf("Error creating Azure session: %v", err)
 			return err
 		}
+
 		s.azureSessions[cRef] = azurehub{
-			Name:   channel.Spec.EventHubName,
-			Client: client,
+			Name:             channel.Spec.EventHubName,
+			hubManagerClient: hubManager,
+			hubClient:        hub,
 		}
 	}
 	return nil
@@ -310,13 +283,24 @@ func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channe
 	}
 }
 
-func (s *SubscriptionsSupervisor) azureClient(creds *corev1.Secret) (*mgmt.EventHubsClient, error) {
+func (s *SubscriptionsSupervisor) newClients(creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return nil, nil, fmt.Errorf("Credentials data is nil")
 	}
-	subscriptionID, present := creds.Data["_subscription_id"]
+	connStr, present := creds.Data["_connection_string"]
 	if !present {
-		return nil, fmt.Errorf("\"_subscription_id\" key is missing")
+		return nil, nil, fmt.Errorf("\"_connection_string\" key is missing")
 	}
-	return util.Connect(string(subscriptionID), s.logger.Sugar()), nil
+
+	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Could not create new hub manager ", err)
+	}
+
+	hub, err := eventhub.NewHubFromConnectionString(string(connStr))
+	if err != nil {
+		return nil, nil, fmt.Errorf("Could not create new hub ", err)
+	}
+
+	return hubManager, hub, nil
 }
