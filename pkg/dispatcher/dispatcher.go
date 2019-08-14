@@ -259,7 +259,7 @@ func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channe
 	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
 	_, present := s.azureSessions[cRef]
 	if !present {
-		hubManager, hub, err := s.newClients(secret)
+		hubManager, hub, err := s.newClients(channel.Spec.EventHubName, secret)
 		if err != nil {
 			logger.Errorf("Error creating Azure session: %v", err)
 			return err
@@ -284,7 +284,7 @@ func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channe
 	}
 }
 
-func (s *SubscriptionsSupervisor) newClients(creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
+func (s *SubscriptionsSupervisor) newClients(hubName string, creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
 	if creds == nil {
 		return nil, nil, fmt.Errorf("Credentials data is nil")
 	}
@@ -295,12 +295,12 @@ func (s *SubscriptionsSupervisor) newClients(creds *corev1.Secret) (*eventhub.Hu
 
 	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub manager ", err)
+		return nil, nil, fmt.Errorf("Could not create new hub manager %v", err)
 	}
 
-	hub, err := eventhub.NewHubFromConnectionString(string(connStr))
+	hub, err := eventhub.NewHubFromConnectionString(string(connStr) + ";EntityPath=" + hubName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub ", err)
+		return nil, nil, fmt.Errorf("Could not create new hub %v", err)
 	}
 
 	return hubManager, hub, nil
