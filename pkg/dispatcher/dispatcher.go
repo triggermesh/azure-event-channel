@@ -185,10 +185,12 @@ func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisi
 		})
 	}
 
+	s.logger.Info("Hub to get runtime info about", zap.Any("hub", session.hubClient))
+
 	// listen to each partition of the Event Hub
 	runtimeInfo, err := session.hubClient.GetRuntimeInformation(ctx)
 	if err != nil {
-		return fmt.Errorf("GetRuntimeInformation failed: ", err)
+		return fmt.Errorf("GetRuntimeInformation failed: %v", err)
 	}
 
 	for _, partitionID := range runtimeInfo.PartitionIDs {
