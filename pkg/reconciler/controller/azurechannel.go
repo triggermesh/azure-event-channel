@@ -24,6 +24,7 @@ import (
 
 	"github.com/Azure/azure-event-hubs-go"
 
+	eh "github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub"
 	"github.com/knative/eventing/pkg/logging"
 	"github.com/knative/eventing/pkg/reconciler/names"
 	"github.com/knative/pkg/apis"
@@ -311,13 +312,15 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 				if err != nil {
 					return err
 				}
-				// Available 1
-				// Limited 2
-				// Restoring 3
-				// Unknown 0
-				if *res.EntityAvailabilityStatus == "Available" {
+
+				if res == nil {
+					return util.Create(ctx, hubManager, kc.Spec.EventHubName)
+				}
+
+				if *res.Status == eh.Active {
 					break
 				}
+
 				time.Sleep(time.Second)
 			}
 		}

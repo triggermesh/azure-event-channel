@@ -1159,6 +1159,7 @@
   analyzer-version = 1
   input-imports = [
     "github.com/Azure/azure-event-hubs-go",
+    "github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub",
     "github.com/knative/eventing/pkg/apis/duck/v1alpha1",
     "github.com/knative/eventing/pkg/apis/eventing/v1alpha1",
     "github.com/knative/eventing/pkg/logconfig",
