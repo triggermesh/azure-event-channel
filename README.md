@@ -27,3 +27,24 @@ export SYSTEM_NAMESPACE=default
 ``` 
 go run cmd/channel_controller/main.go -kubeconfig="$HOME/.kube/config" -hardCodedLoggingConfig=true
 ```
+
+## Deploy
+
+To deploy controller use 
+```
+ko apply -f config/
+```
+This will take all the configurations and deploy Azure CRD on your cluster to `knative-eventing` namespace
+
+To see it's running use 
+```
+kubectl -n knative-eventing get pods
+```
+To follow logs use 
+```
+kubectl logs --tail=50 <name of your pod here> -f 
+```
+
+## Use
+
+You can find example channels and sources in example folder. Apply them with `kubectl` to your namespace to get Azure CRD working
