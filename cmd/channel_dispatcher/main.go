@@ -94,7 +94,12 @@ func main() {
 	}
 
 	logger.Info("Starting dispatcher.")
-	go azureDispatcher.Start(stopCh)
+	go func() {
+		err := azureDispatcher.Start(stopCh)
+		if err != nil {
+			logger.Fatalf("Failed to start dispatcher: %v", err)
+		}
+	}()
 
 	logger.Info("Starting controllers.")
 	kncontroller.StartAll(stopCh, controllers[:]...)

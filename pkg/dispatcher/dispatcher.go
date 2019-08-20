@@ -20,7 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/Azure/azure-event-hubs-go"
+	"sync"
+	"sync/atomic"
+
+	eventhub "github.com/Azure/azure-event-hubs-go"
 	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
 	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
 	"github.com/knative/eventing/pkg/logging"
@@ -29,8 +32,6 @@ import (
 	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"sync"
-	"sync/atomic"
 )
 
 // SubscriptionsSupervisor manages the state of Azure Streaming subscriptions
@@ -168,7 +169,9 @@ func (s *SubscriptionsSupervisor) UpdateSubscriptions(ctx context.Context, chann
 
 func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisioners.ChannelReference, subscription subscriptionReference) error {
 	s.logger.Info("Subscribe to eventhub:", zap.Any("channel", channel), zap.Any("subscription", subscription))
-
+	for k, v := range s.azureSessions {
+		s.logger.Info("Azure sessions:", zap.Any("key", k), zap.Any("val", v))
+	}
 	session, present := s.azureSessions[channel]
 	if !present {
 		s.logger.Error("Azure session not found:", zap.Any("channel", channel))
@@ -183,6 +186,10 @@ func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisi
 		}, subscription.SubscriberURI, subscription.ReplyURI, provisioners.DispatchDefaults{
 			Namespace: channel.Namespace,
 		})
+	}
+
+	if session.hubClient == nil {
+		return fmt.Errorf("hub is empty")
 	}
 
 	s.logger.Info("Hub to get runtime info about", zap.Any("hub", session.hubClient))
@@ -257,8 +264,10 @@ func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channe
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-	_, present := s.azureSessions[cRef]
-	if !present {
+	azurehubInstance, present := s.azureSessions[cRef]
+	logger.Errorf("Channel Reference: %v", cRef)
+
+	if !present && azurehubInstance.hubClient != nil && azurehubInstance.hubManagerClient != nil {
 		hubManager, hub, err := s.newClients(channel.Spec.EventHubName, secret)
 		if err != nil {
 			logger.Errorf("Error creating Azure session: %v", err)
@@ -285,6 +294,8 @@ func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channe
 }
 
 func (s *SubscriptionsSupervisor) newClients(hubName string, creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
+	logger.Info("Creating new Clients for ", hubName)
+
 	if creds == nil {
 		return nil, nil, fmt.Errorf("Credentials data is nil")
 	}
@@ -302,6 +313,9 @@ func (s *SubscriptionsSupervisor) newClients(hubName string, creds *corev1.Secre
 	if err != nil {
 		return nil, nil, fmt.Errorf("Could not create new hub %v", err)
 	}
+
+	logger.Infof("new HubManager for %v, %v", hubName, hubManager)
+	logger.Infof("new Hub for %v, %v", hubName, hub)
 
 	return hubManager, hub, nil
 }
