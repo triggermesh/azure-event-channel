@@ -30,6 +30,7 @@ import (
 	"github.com/knative/eventing/pkg/provisioners"
 	"github.com/lxc/lxd/shared/logger"
 	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
+	"github.com/triggermesh/azure-event-channel/pkg/util"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -42,16 +43,15 @@ type SubscriptionsSupervisor struct {
 	dispatcher *provisioners.MessageDispatcher
 
 	mux           sync.Mutex
-	azureSessions map[provisioners.ChannelReference]azurehub
+	azureSessions map[provisioners.ChannelReference]client
 	subscriptions map[provisioners.ChannelReference]map[subscriptionReference]bool
 
 	hostToChannelMap atomic.Value
 }
 
-type azurehub struct {
-	Name             string
-	hubClient        *eventhub.Hub
-	hubManagerClient *eventhub.HubManager
+type client struct {
+	HubName             string
+	AzureEventHubClient *util.AzureEventHubClient
 }
 
 // NewDispatcher returns a new SubscriptionsSupervisor.
@@ -59,7 +59,7 @@ func NewDispatcher(logger *zap.Logger) (*SubscriptionsSupervisor, error) {
 	d := &SubscriptionsSupervisor{
 		logger:        logger,
 		dispatcher:    provisioners.NewMessageDispatcher(logger.Sugar()),
-		azureSessions: make(map[provisioners.ChannelReference]azurehub),
+		azureSessions: make(map[provisioners.ChannelReference]client),
 		subscriptions: make(map[provisioners.ChannelReference]map[subscriptionReference]bool),
 	}
 	d.setHostToChannelMap(map[string]provisioners.ChannelReference{})
@@ -85,12 +85,12 @@ func createReceiverFunction(ctx context.Context, s *SubscriptionsSupervisor, log
 			return err
 		}
 		cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-		hc, present := s.azureSessions[cRef]
+		client, present := s.azureSessions[cRef]
 		if !present {
 			logger.Errorf("Azure session not initialized")
 			return err
 		}
-		if err := hc.hubClient.Send(ctx, eventhub.NewEvent(message)); err != nil {
+		if err := client.AzureEventHubClient.Hub.Send(ctx, eventhub.NewEvent(message)); err != nil {
 			logger.Errorf("Error during publish: %v", err)
 			return err
 		}
@@ -188,20 +188,16 @@ func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisi
 		})
 	}
 
-	if session.hubClient == nil {
-		return fmt.Errorf("hub is empty")
-	}
-
-	s.logger.Info("Hub to get runtime info about", zap.Any("hub", session.hubClient))
+	s.logger.Info("Hub to get runtime info about", zap.Any("hub", session.HubName))
 
 	// listen to each partition of the Event Hub
-	runtimeInfo, err := session.hubClient.GetRuntimeInformation(ctx)
+	runtimeInfo, err := session.AzureEventHubClient.Hub.GetRuntimeInformation(ctx)
 	if err != nil {
 		return fmt.Errorf("GetRuntimeInformation failed: %v", err)
 	}
 
 	for _, partitionID := range runtimeInfo.PartitionIDs {
-		_, err := session.hubClient.Receive(ctx, partitionID, handler, eventhub.ReceiveWithLatestOffset())
+		_, err := session.AzureEventHubClient.Hub.Receive(ctx, partitionID, handler, eventhub.ReceiveWithLatestOffset())
 		if err != nil {
 			s.logger.Error("Receive func failed:", zap.Any("partitionID", partitionID), zap.Any("error", err))
 		}
@@ -261,25 +257,27 @@ func (s *SubscriptionsSupervisor) AzureSessionExist(ctx context.Context, channel
 
 //CreateAzureSession creates azure session
 func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel, secret *corev1.Secret) error {
+	if s.AzureSessionExist(ctx, channel) {
+		return nil
+	}
+
+	logger.Infof("Create new Azure session for : %v", channel.Name)
+
+	conn, err := s.newClient(ctx, channel.Spec.EventHubName, channel.Spec.EventHubRegion, secret)
+	if err != nil {
+		logger.Errorf("Error creating Azure session: %v", err)
+		return err
+	}
+
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-	azurehubInstance, present := s.azureSessions[cRef]
-	logger.Errorf("Channel Reference: %v", cRef)
 
-	if !present && azurehubInstance.hubClient != nil && azurehubInstance.hubManagerClient != nil {
-		hubManager, hub, err := s.newClients(channel.Spec.EventHubName, secret)
-		if err != nil {
-			logger.Errorf("Error creating Azure session: %v", err)
-			return err
-		}
-
-		s.azureSessions[cRef] = azurehub{
-			Name:             channel.Spec.EventHubName,
-			hubManagerClient: hubManager,
-			hubClient:        hub,
-		}
+	s.azureSessions[cRef] = client{
+		HubName:             channel.Spec.EventHubName,
+		AzureEventHubClient: conn,
 	}
+
 	return nil
 }
 
@@ -293,29 +291,44 @@ func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channe
 	}
 }
 
-func (s *SubscriptionsSupervisor) newClients(hubName string, creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
-	logger.Info("Creating new Clients for ", hubName)
+func (s *SubscriptionsSupervisor) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
+	logger.Info("Creating new Azure Eventhub Client")
 
 	if creds == nil {
-		return nil, nil, fmt.Errorf("Credentials data is nil")
+		return nil, fmt.Errorf("Credentials data is nil")
 	}
-	connStr, present := creds.Data["_connection_string"]
+
+	subscriptionID, present := creds.Data["_subscription_id"]
 	if !present {
-		return nil, nil, fmt.Errorf("\"_connection_string\" key is missing")
+		return nil, fmt.Errorf("\"_subscription_id\" key is missing")
 	}
 
-	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
+	tenantID, present := creds.Data["_tenant_id"]
+	if !present {
+		return nil, fmt.Errorf("\"_tenant_id\" key is missing")
+	}
+
+	clientID, present := creds.Data["_client_id"]
+	if !present {
+		return nil, fmt.Errorf("\"_client_id\" key is missing")
+	}
+
+	clientSecret, present := creds.Data["_client_secret"]
+	if !present {
+		return nil, fmt.Errorf("\"_client_secret\" key is missing")
+	}
+
+	azureClient, err := util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub manager %v", err)
+		return nil, err
 	}
 
-	hub, err := eventhub.NewHubFromConnectionString(string(connStr) + ";EntityPath=" + hubName)
+	hub, err := azureClient.CreateOrUpdateHub(ctx, hubName, region)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub %v", err)
+		return nil, err
 	}
 
-	logger.Infof("new HubManager for %v, %v", hubName, hubManager)
-	logger.Infof("new Hub for %v, %v", hubName, hub)
+	azureClient.Hub = hub
 
-	return hubManager, hub, nil
+	return azureClient, nil
 }

@@ -22,9 +22,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/Azure/azure-event-hubs-go"
-
-	eh "github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub"
+	"github.com/Azure/azure-sdk-for-go/services/eventhub/mgmt/2017-04-01/eventhub"
 	"github.com/knative/eventing/pkg/logging"
 	"github.com/knative/eventing/pkg/reconciler/names"
 	"github.com/knative/pkg/apis"
@@ -209,11 +207,11 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			if err != nil {
 				return err
 			}
-			hubManager, _, err := r.hubClients(creds)
+			azureClient, err := connect(ctx, creds)
 			if err != nil {
 				return err
 			}
-			if err := r.removeAzureHub(ctx, kc.Spec.EventHubName, hubManager); err != nil {
+			if err := removeHub(ctx, kc.Spec.EventHubName, azureClient); err != nil {
 				return err
 			}
 		}
@@ -289,15 +287,15 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 
 	if kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsUnknown() ||
 		kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsFalse() {
-		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.EventHubName, metav1.GetOptions{})
+		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.SecretName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		hubManager, _, err := r.hubClients(creds)
+		azureClient, err := connect(ctx, creds)
 		if err != nil {
 			return err
 		}
-		if err := r.setupAzureHub(ctx, kc.Spec.EventHubName, hubManager); err != nil {
+		if err := createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(time.Duration(3 * time.Minute))
@@ -308,16 +306,16 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			return fmt.Errorf("Stream didn't switch to active state in time")
 		default:
 			for {
-				res, err := util.Describe(ctx, hubManager, kc.Spec.EventHubName)
+				if azureClient.Hub == nil {
+					return createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient)
+				}
+
+				model, err := azureClient.HubClient.Get(ctx, kc.Spec.EventHubName, kc.Spec.EventHubName, kc.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
 
-				if res == nil {
-					return util.Create(ctx, hubManager, kc.Spec.EventHubName)
-				}
-
-				if *res.Status == eh.Active {
+				if model.Properties.Status == eventhub.Active {
 					break
 				}
 
@@ -389,38 +387,45 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	return new, err
 }
 
-func (r *Reconciler) hubClients(creds *corev1.Secret) (*eventhub.HubManager, *eventhub.Hub, error) {
+func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
 	if creds == nil {
-		return nil, nil, fmt.Errorf("Credentials data is nil")
+		return nil, fmt.Errorf("Credentials data is nil")
 	}
-	connStr, present := creds.Data["_connection_string"]
+
+	subscriptionID, present := creds.Data["_subscription_id"]
 	if !present {
-		return nil, nil, fmt.Errorf("\"_connection_string\" key is missing")
+		return nil, fmt.Errorf("\"_subscription_id\" key is missing")
 	}
 
-	hubManager, err := eventhub.NewHubManagerFromConnectionString(string(connStr))
-	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub manager %v", err)
+	tenantID, present := creds.Data["_tenant_id"]
+	if !present {
+		return nil, fmt.Errorf("\"_tenant_id\" key is missing")
 	}
 
-	hub, err := eventhub.NewHubFromConnectionString(string(connStr))
-	if err != nil {
-		return nil, nil, fmt.Errorf("Could not create new hub %v", err)
+	clientID, present := creds.Data["_client_id"]
+	if !present {
+		return nil, fmt.Errorf("\"_client_id\" key is missing")
 	}
 
-	return hubManager, hub, nil
+	clientSecret, present := creds.Data["_client_secret"]
+	if !present {
+		return nil, fmt.Errorf("\"_client_secret\" key is missing")
+	}
+
+	return util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 }
 
-func (r *Reconciler) setupAzureHub(ctx context.Context, hub string, hubManagerClient *eventhub.HubManager) error {
-	if _, err := util.Describe(ctx, hubManagerClient, hub); err == nil {
-		return nil
+func createHub(ctx context.Context, hubName, region string, azureClient *util.AzureEventHubClient) error {
+	hub, err := azureClient.CreateOrUpdateHub(ctx, hubName, region)
+	if err != nil {
+		return err
 	}
-	return util.Create(ctx, hubManagerClient, hub)
+	if hub == nil {
+		return fmt.Errorf("hub is empty")
+	}
+	return nil
 }
 
-func (r *Reconciler) removeAzureHub(ctx context.Context, hub string, hubManagerClient *eventhub.HubManager) error {
-	if _, err := util.Describe(ctx, hubManagerClient, hub); err != nil {
-		return nil
-	}
-	return util.Delete(ctx, hubManagerClient, hub)
+func removeHub(ctx context.Context, hubName string, azureClient *util.AzureEventHubClient) error {
+	return azureClient.DeleteHub(ctx, hubName)
 }
