@@ -27,7 +27,7 @@ var kc = apis.NewLivingConditionSet(
 	AzureChannelConditionDispatcherReady,
 	AzureChannelConditionServiceReady,
 	AzureChannelConditionEndpointsReady,
-	AzureChannelConditionStreamReady,
+	AzureChannelConditionHubReady,
 	AzureChannelConditionAddressable,
 	AzureChannelConditionChannelServiceReady)
 
@@ -49,7 +49,7 @@ const (
 	// by at least one endpoint.
 	AzureChannelConditionEndpointsReady apis.ConditionType = "EndpointsReady"
 
-	AzureChannelConditionStreamReady apis.ConditionType = "StreamReady"
+	AzureChannelConditionHubReady apis.ConditionType = "HubReady"
 
 	// AzureChannelConditionAddressable has status true when this AzureChannel meets
 	// the Addressable contract and has a non-empty hostname.
@@ -132,10 +132,10 @@ func (cs *AzureChannelStatus) MarkEndpointsTrue() {
 	kc.Manage(cs).MarkTrue(AzureChannelConditionEndpointsReady)
 }
 
-func (cs *AzureChannelStatus) MarkStreamFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionStreamReady, reason, messageFormat, messageA...)
+func (cs *AzureChannelStatus) MarkHubFailed(reason, messageFormat string, messageA ...interface{}) {
+	kc.Manage(cs).MarkFalse(AzureChannelConditionHubReady, reason, messageFormat, messageA...)
 }
 
-func (cs *AzureChannelStatus) MarkStreamTrue() {
-	kc.Manage(cs).MarkTrue(AzureChannelConditionStreamReady)
+func (cs *AzureChannelStatus) MarkHubTrue() {
+	kc.Manage(cs).MarkTrue(AzureChannelConditionHubReady)
 }
