@@ -51,7 +51,7 @@ type SubscriptionsSupervisor struct {
 
 type client struct {
 	HubName             string
-	AzureEventHubClient *util.AzureEventHubClient
+	AzureEventHubClient util.AzureEventHubClient
 }
 
 // NewDispatcher returns a new SubscriptionsSupervisor.
@@ -291,42 +291,60 @@ func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channe
 	}
 }
 
-func (s *SubscriptionsSupervisor) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
+func (s *SubscriptionsSupervisor) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (util.AzureEventHubClient, error) {
+	logger := logging.FromContext(ctx)
+
+	azureClient := util.AzureEventHubClient{}
+
 	logger.Info("Creating new Azure Eventhub Client")
 
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return azureClient, fmt.Errorf("Credentials data is nil")
 	}
 
 	subscriptionID, present := creds.Data["subscription_id"]
 	if !present {
-		return nil, fmt.Errorf("\"subscription_id\" key is missing")
+		return azureClient, fmt.Errorf("\"subscription_id\" key is missing")
 	}
 
 	tenantID, present := creds.Data["tenant_id"]
 	if !present {
-		return nil, fmt.Errorf("\"tenant_id\" key is missing")
+		return azureClient, fmt.Errorf("\"tenant_id\" key is missing")
 	}
 
 	clientID, present := creds.Data["client_id"]
 	if !present {
-		return nil, fmt.Errorf("\"client_id\" key is missing")
+		return azureClient, fmt.Errorf("\"client_id\" key is missing")
 	}
 
-	clientSecret, present := creds.Data["_client_secret"]
+	clientSecret, present := creds.Data["client_secret"]
 	if !present {
-		return nil, fmt.Errorf("\"client_secret\" key is missing")
+		return azureClient, fmt.Errorf("\"client_secret\" key is missing")
 	}
+
+	logger.Info(
+		"New credentials in dispatcher!",
+		zap.Any("subscriptionID", string(subscriptionID)),
+		zap.Any("tenantID", string(tenantID)),
+		zap.Any("clientID", string(clientID)),
+		zap.Any("clientSecret", string(clientSecret)),
+	)
 
 	azureClient, err := util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 	if err != nil {
-		return nil, err
+		logger.Error("Connected to Azure failed", zap.Error(err))
+		return azureClient, err
 	}
+
+	logger.Info("Connected to Azure", zap.Any("azureClient", azureClient))
 
 	hub, err := azureClient.CreateOrUpdateHub(ctx, hubName, region)
 	if err != nil {
-		return nil, err
+		logger.Error("CreateOrUpdateHub failed", zap.Error(err))
+		return azureClient, err
 	}
+
+	logger.Info("New hub in dispatcher!", zap.Any("hub", hub))
 
 	azureClient.Hub = hub
 

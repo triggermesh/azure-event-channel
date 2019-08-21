@@ -329,7 +329,6 @@ func (c *Impl) processNextWorkItem() bool {
 	// resource to be synced.
 	if err = c.Reconciler.Reconcile(ctx, key); err != nil {
 		c.handleErr(err, key)
-		logger.Infof("Reconcile failed. Time taken: %v.", time.Since(startTime))
 		return true
 	}
 
@@ -342,7 +341,7 @@ func (c *Impl) processNextWorkItem() bool {
 }
 
 func (c *Impl) handleErr(err error, key string) {
-	c.logger.Errorw("Reconcile error", zap.Error(err))
+	c.logger.Warn("Reconcile failed: ", zap.Error(err))
 
 	// Re-queue the key if it's an transient error.
 	if !IsPermanentError(err) {

@@ -36,7 +36,8 @@ type AzureEventHubClient struct {
 }
 
 //Connect establishes connection with Azure
-func Connect(ctx context.Context, subscriptionID, tenantID, clientID, clientSecret string) (*AzureEventHubClient, error) {
+func Connect(ctx context.Context, subscriptionID, tenantID, clientID, clientSecret string) (AzureEventHubClient, error) {
+
 	settings := auth.EnvironmentSettings{
 		Values: map[string]string{
 			"AZURE_SUBSCRIPTION_ID":   subscriptionID,
@@ -61,19 +62,20 @@ func Connect(ctx context.Context, subscriptionID, tenantID, clientID, clientSecr
 	// create an authorizer from env vars or Azure Managed Service Idenity
 	authorizer, err := settings.GetAuthorizer()
 	if err != nil {
-		return nil, err
+		return AzureEventHubClient{}, err
 	}
 
 	namespaceClient.Authorizer = authorizer
 	groupsClient.Authorizer = authorizer
 	hubClient.Authorizer = authorizer
 
-	return &AzureEventHubClient{namespaceClient, groupsClient, hubClient, nil}, nil
+	return AzureEventHubClient{namespaceClient, groupsClient, hubClient, nil}, nil
 }
 
 // CreateOrUpdateHub creates or updates hub with provided name and an Azure region
 // It creates group, namespace and then hub and auth rule to connect to it.
-func (conn *AzureEventHubClient) CreateOrUpdateHub(ctx context.Context, name, region string) (*eventhubs.Hub, error) {
+func (conn AzureEventHubClient) CreateOrUpdateHub(ctx context.Context, name, region string) (*eventhubs.Hub, error) {
+
 	resourceGroup, err := conn.GroupClient.CreateOrUpdate(
 		ctx,
 		name,
@@ -170,7 +172,7 @@ func (conn *AzureEventHubClient) CreateOrUpdateHub(ctx context.Context, name, re
 
 // DeleteHub deletes whole group that results in deletion of hub, namespace and group
 // this is implemented for consistency reasons. Deletion usually takes sometime to complete
-func (conn *AzureEventHubClient) DeleteHub(ctx context.Context, name string) error {
+func (conn AzureEventHubClient) DeleteHub(ctx context.Context, name string) error {
 	future, err := conn.GroupClient.Delete(ctx, name)
 
 	if err != nil {

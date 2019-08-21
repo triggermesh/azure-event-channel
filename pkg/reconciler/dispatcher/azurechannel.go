@@ -100,6 +100,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 		return nil
 	}
 
+	logging.FromContext(ctx).Info("Azure Channel Info", zap.Any("namespace", namespace), zap.Any("name", name))
+
 	// Get the AzureChannel resource with this namespace/name.
 	original, err := r.azurechannelLister.AzureChannels(namespace).Get(name)
 	if apierrs.IsNotFound(err) {

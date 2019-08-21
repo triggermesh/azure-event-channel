@@ -165,7 +165,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	original, err := r.azurechannelLister.AzureChannels(namespace).Get(name)
 	if apierrs.IsNotFound(err) {
 		// The resource may no longer exist, in which case we stop processing.
-		logging.FromContext(ctx).Error("AzureChannel key in work queue no longer exists")
 		return nil
 	} else if err != nil {
 		return err
@@ -387,35 +386,47 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	return new, err
 }
 
-func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
+func connect(ctx context.Context, creds *corev1.Secret) (util.AzureEventHubClient, error) {
+	logger := logging.FromContext(ctx)
+
+	azureClient := util.AzureEventHubClient{}
+
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return azureClient, fmt.Errorf("Credentials data is nil")
 	}
 
 	subscriptionID, present := creds.Data["subscription_id"]
 	if !present {
-		return nil, fmt.Errorf("\"subscription_id\" key is missing")
+		return azureClient, fmt.Errorf("\"subscription_id\" key is missing")
 	}
 
 	tenantID, present := creds.Data["tenant_id"]
 	if !present {
-		return nil, fmt.Errorf("\"tenant_id\" key is missing")
+		return azureClient, fmt.Errorf("\"tenant_id\" key is missing")
 	}
 
 	clientID, present := creds.Data["client_id"]
 	if !present {
-		return nil, fmt.Errorf("\"client_id\" key is missing")
+		return azureClient, fmt.Errorf("\"client_id\" key is missing")
 	}
 
 	clientSecret, present := creds.Data["client_secret"]
 	if !present {
-		return nil, fmt.Errorf("\"client_secret\" key is missing")
+		return azureClient, fmt.Errorf("\"client_secret\" key is missing")
 	}
+
+	logger.Info(
+		"New credentials in controller!",
+		zap.Any("subscriptionID", string(subscriptionID)),
+		zap.Any("tenantID", string(tenantID)),
+		zap.Any("clientID", string(clientID)),
+		zap.Any("clientSecret", string(clientSecret)),
+	)
 
 	return util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 }
 
-func createHub(ctx context.Context, hubName, region string, azureClient *util.AzureEventHubClient) error {
+func createHub(ctx context.Context, hubName, region string, azureClient util.AzureEventHubClient) error {
 	hub, err := azureClient.CreateOrUpdateHub(ctx, hubName, region)
 	if err != nil {
 		return err
@@ -426,6 +437,6 @@ func createHub(ctx context.Context, hubName, region string, azureClient *util.Az
 	return nil
 }
 
-func removeHub(ctx context.Context, hubName string, azureClient *util.AzureEventHubClient) error {
+func removeHub(ctx context.Context, hubName string, azureClient util.AzureEventHubClient) error {
 	return azureClient.DeleteHub(ctx, hubName)
 }
