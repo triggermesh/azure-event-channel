@@ -298,24 +298,24 @@ func (s *SubscriptionsSupervisor) newClient(ctx context.Context, hubName, region
 		return nil, fmt.Errorf("Credentials data is nil")
 	}
 
-	subscriptionID, present := creds.Data["_subscription_id"]
+	subscriptionID, present := creds.Data["subscription_id"]
 	if !present {
-		return nil, fmt.Errorf("\"_subscription_id\" key is missing")
+		return nil, fmt.Errorf("\"subscription_id\" key is missing")
 	}
 
-	tenantID, present := creds.Data["_tenant_id"]
+	tenantID, present := creds.Data["tenant_id"]
 	if !present {
-		return nil, fmt.Errorf("\"_tenant_id\" key is missing")
+		return nil, fmt.Errorf("\"tenant_id\" key is missing")
 	}
 
-	clientID, present := creds.Data["_client_id"]
+	clientID, present := creds.Data["client_id"]
 	if !present {
-		return nil, fmt.Errorf("\"_client_id\" key is missing")
+		return nil, fmt.Errorf("\"client_id\" key is missing")
 	}
 
 	clientSecret, present := creds.Data["_client_secret"]
 	if !present {
-		return nil, fmt.Errorf("\"_client_secret\" key is missing")
+		return nil, fmt.Errorf("\"client_secret\" key is missing")
 	}
 
 	azureClient, err := util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
