@@ -201,7 +201,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 
 	// See if the channel has been deleted.
 	if kc.DeletionTimestamp != nil {
-		if kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsTrue() {
+		if kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsTrue() {
 			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.EventHubName, metav1.GetOptions{})
 			if err != nil {
 				return err
@@ -284,8 +284,8 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 		Host:   names.ServiceHostName(svc.Name, svc.Namespace),
 	})
 
-	if kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsUnknown() ||
-		kc.Status.GetCondition(v1alpha1.AzureChannelConditionStreamReady).IsFalse() {
+	if kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsUnknown() ||
+		kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsFalse() {
 		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.SecretName, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -322,7 +322,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			}
 		}
 	}
-	kc.Status.MarkStreamTrue()
+	kc.Status.MarkHubTrue()
 	return nil
 }
 
@@ -427,6 +427,10 @@ func connect(ctx context.Context, creds *corev1.Secret) (util.AzureEventHubClien
 }
 
 func createHub(ctx context.Context, hubName, region string, azureClient util.AzureEventHubClient) error {
+	if azureClient.Hub != nil {
+		return nil
+	}
+
 	hub, err := azureClient.CreateOrUpdateHub(ctx, hubName, region)
 	if err != nil {
 		return err
