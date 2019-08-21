@@ -4,3 +4,6 @@ metadata:
   name: azure-test
 spec:
   event_hub_name: "triggermesh"
+  event_hub_region: "WEST US"
+  secret_name: "azure"
+
