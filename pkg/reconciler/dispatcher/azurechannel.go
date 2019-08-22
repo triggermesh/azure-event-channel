@@ -106,7 +106,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	original, err := r.azurechannelLister.AzureChannels(namespace).Get(name)
 	if apierrs.IsNotFound(err) {
 		// The resource may no longer exist, in which case we stop processing.
-		logging.FromContext(ctx).Error("AzureChannel key in work queue no longer exists")
 		return nil
 	} else if err != nil {
 		return err

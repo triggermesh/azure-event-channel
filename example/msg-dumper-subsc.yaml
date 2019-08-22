@@ -1,0 +1,14 @@
+apiVersion: eventing.knative.dev/v1alpha1
+kind: Subscription
+metadata:
+    name: azure-test-message-dumper-trigger
+spec:
+    channel:
+        apiVersion: messaging.triggermesh.dev/v1alpha1
+        kind: AzureChannel
+        name: azure-test
+    subscriber:
+        ref:
+            apiVersion: serving.knative.dev/v1alpha1
+            kind: Service
+            name: message-dumper

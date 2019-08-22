@@ -304,22 +304,17 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			ctx.Done()
 			return fmt.Errorf("Stream didn't switch to active state in time")
 		default:
-			logger.Info("Default option activated!")
 			for {
 				if azureClient.Hub == nil {
-					logger.Info("Hub is empty, create hub!")
 					return createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient)
 				}
 
-				logger.Info("Check hub status!")
 				model, err := azureClient.HubClient.Get(ctx, kc.Spec.EventHubName, kc.Spec.EventHubName, kc.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
 
-				logger.Info("hub status: ", zap.Any("status", model.Properties.Status), zap.Any("status active", eventhub.Active))
 				if model.Properties.Status == eventhub.Active {
-					logger.Info("Hub became active!!! BREAK!")
 					break
 				}
 
@@ -327,7 +322,6 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			}
 		}
 	}
-	logger.Info("MarkHubTrue!!!!")
 	kc.Status.MarkHubTrue()
 	return nil
 }
@@ -393,7 +387,6 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 }
 
 func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
-	logger := logging.FromContext(ctx)
 
 	if creds == nil {
 		return nil, fmt.Errorf("Credentials data is nil")
@@ -418,14 +411,6 @@ func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClie
 	if !present {
 		return nil, fmt.Errorf("\"client_secret\" key is missing")
 	}
-
-	logger.Info(
-		"New credentials in controller!",
-		zap.Any("subscriptionID", string(subscriptionID)),
-		zap.Any("tenantID", string(tenantID)),
-		zap.Any("clientID", string(clientID)),
-		zap.Any("clientSecret", string(clientSecret)),
-	)
 
 	return util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 }
