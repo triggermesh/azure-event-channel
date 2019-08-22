@@ -202,7 +202,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 	// See if the channel has been deleted.
 	if kc.DeletionTimestamp != nil {
 		if kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsTrue() {
-			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.EventHubName, metav1.GetOptions{})
+			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.SecretName, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
