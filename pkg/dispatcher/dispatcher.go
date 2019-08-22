@@ -181,11 +181,7 @@ func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisi
 	handler := func(c context.Context, event *eventhub.Event) error {
 		s.logger.Info("New event!", zap.Any("data", string(event.Data)))
 
-		headers := make(map[string]string)
-		headers["ContentType"] = "application/json"
-
 		return s.dispatcher.DispatchMessage(&provisioners.Message{
-			Headers: headers,
 			Payload: event.Data,
 		}, subscription.SubscriberURI, subscription.ReplyURI, provisioners.DispatchDefaults{
 			Namespace: channel.Namespace,
