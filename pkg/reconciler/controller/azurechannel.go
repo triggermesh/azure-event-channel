@@ -304,17 +304,22 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			ctx.Done()
 			return fmt.Errorf("Stream didn't switch to active state in time")
 		default:
+			logger.Info("Default option activated!")
 			for {
 				if azureClient.Hub == nil {
+					logger.Info("Hub is empty, create hub!")
 					return createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient)
 				}
 
+				logger.Info("Check hub status!")
 				model, err := azureClient.HubClient.Get(ctx, kc.Spec.EventHubName, kc.Spec.EventHubName, kc.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
 
+				logger.Info("hub status: ", zap.Any("status", model.Properties.Status), zap.Any("status active", eventhub.Active))
 				if model.Properties.Status == eventhub.Active {
+					logger.Info("Hub became active!!! BREAK!")
 					break
 				}
 
@@ -322,6 +327,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			}
 		}
 	}
+	logger.Info("MarkHubTrue!!!!")
 	kc.Status.MarkHubTrue()
 	return nil
 }
@@ -386,33 +392,31 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	return new, err
 }
 
-func connect(ctx context.Context, creds *corev1.Secret) (util.AzureEventHubClient, error) {
+func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
 	logger := logging.FromContext(ctx)
 
-	azureClient := util.AzureEventHubClient{}
-
 	if creds == nil {
-		return azureClient, fmt.Errorf("Credentials data is nil")
+		return nil, fmt.Errorf("Credentials data is nil")
 	}
 
 	subscriptionID, present := creds.Data["subscription_id"]
 	if !present {
-		return azureClient, fmt.Errorf("\"subscription_id\" key is missing")
+		return nil, fmt.Errorf("\"subscription_id\" key is missing")
 	}
 
 	tenantID, present := creds.Data["tenant_id"]
 	if !present {
-		return azureClient, fmt.Errorf("\"tenant_id\" key is missing")
+		return nil, fmt.Errorf("\"tenant_id\" key is missing")
 	}
 
 	clientID, present := creds.Data["client_id"]
 	if !present {
-		return azureClient, fmt.Errorf("\"client_id\" key is missing")
+		return nil, fmt.Errorf("\"client_id\" key is missing")
 	}
 
 	clientSecret, present := creds.Data["client_secret"]
 	if !present {
-		return azureClient, fmt.Errorf("\"client_secret\" key is missing")
+		return nil, fmt.Errorf("\"client_secret\" key is missing")
 	}
 
 	logger.Info(
@@ -426,7 +430,7 @@ func connect(ctx context.Context, creds *corev1.Secret) (util.AzureEventHubClien
 	return util.Connect(ctx, string(subscriptionID), string(tenantID), string(clientID), string(clientSecret))
 }
 
-func createHub(ctx context.Context, hubName, region string, azureClient util.AzureEventHubClient) error {
+func createHub(ctx context.Context, hubName, region string, azureClient *util.AzureEventHubClient) error {
 	if azureClient.Hub != nil {
 		return nil
 	}
@@ -438,9 +442,12 @@ func createHub(ctx context.Context, hubName, region string, azureClient util.Azu
 	if hub == nil {
 		return fmt.Errorf("hub is empty")
 	}
+
+	azureClient.Hub = hub
+
 	return nil
 }
 
-func removeHub(ctx context.Context, hubName string, azureClient util.AzureEventHubClient) error {
+func removeHub(ctx context.Context, hubName string, azureClient *util.AzureEventHubClient) error {
 	return azureClient.DeleteHub(ctx, hubName)
 }
