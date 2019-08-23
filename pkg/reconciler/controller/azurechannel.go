@@ -194,15 +194,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	return reconcileErr
 }
 
-func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) error {
-	kc.Status.InitializeConditions()
+func (r *Reconciler) reconcile(ctx context.Context, ac *v1alpha1.AzureChannel) error {
+	ac.Status.InitializeConditions()
 
 	logger := logging.FromContext(ctx)
 
+	if err := ac.Validate(ctx); err != nil {
+		logger.Error("Invalid azure channel", zap.String("channel", ac.Name), zap.Error(err))
+		return err
+	}
+
 	// See if the channel has been deleted.
-	if kc.DeletionTimestamp != nil {
-		if kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsTrue() {
-			creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.SecretName, metav1.GetOptions{})
+	if ac.DeletionTimestamp != nil {
+		if ac.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsTrue() {
+			creds, err := r.KubeClientSet.CoreV1().Secrets(ac.Namespace).Get(ac.Spec.SecretName, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
@@ -210,7 +215,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			if err != nil {
 				return err
 			}
-			if err := removeHub(ctx, kc.Spec.EventHubName, azureClient); err != nil {
+			if err := removeHub(ctx, ac.Spec.EventHubName, azureClient); err != nil {
 				return err
 			}
 		}
@@ -228,14 +233,14 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 	d, err := r.deploymentLister.Deployments(r.dispatcherNamespace).Get(r.dispatcherDeploymentName)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
-			kc.Status.MarkDispatcherFailed("DispatcherDeploymentDoesNotExist", "Dispatcher Deployment does not exist")
+			ac.Status.MarkDispatcherFailed("DispatcherDeploymentDoesNotExist", "Dispatcher Deployment does not exist")
 		} else {
 			logger.Error("Unable to get the dispatcher Deployment", zap.Error(err))
-			kc.Status.MarkDispatcherFailed("DispatcherDeploymentGetFailed", "Failed to get dispatcher Deployment")
+			ac.Status.MarkDispatcherFailed("DispatcherDeploymentGetFailed", "Failed to get dispatcher Deployment")
 		}
 		return err
 	}
-	kc.Status.PropagateDispatcherStatus(&d.Status)
+	ac.Status.PropagateDispatcherStatus(&d.Status)
 
 	// Get the Dispatcher Service and propagate the status to the Channel in case it does not exist.
 	// We don't do anything with the service because it's status contains nothing useful, so just do
@@ -243,50 +248,50 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 	_, err = r.serviceLister.Services(r.dispatcherNamespace).Get(r.dispatcherServiceName)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
-			kc.Status.MarkServiceFailed("DispatcherServiceDoesNotExist", "Dispatcher Service does not exist")
+			ac.Status.MarkServiceFailed("DispatcherServiceDoesNotExist", "Dispatcher Service does not exist")
 		} else {
 			logger.Error("Unable to get the dispatcher service", zap.Error(err))
-			kc.Status.MarkServiceFailed("DispatcherServiceGetFailed", "Failed to get dispatcher service")
+			ac.Status.MarkServiceFailed("DispatcherServiceGetFailed", "Failed to get dispatcher service")
 		}
 		return err
 	}
-	kc.Status.MarkServiceTrue()
+	ac.Status.MarkServiceTrue()
 
 	// Get the Dispatcher Service Endpoints and propagate the status to the Channel
 	// endpoints has the same name as the service, so not a bug.
 	e, err := r.endpointsLister.Endpoints(r.dispatcherNamespace).Get(r.dispatcherServiceName)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
-			kc.Status.MarkEndpointsFailed("DispatcherEndpointsDoesNotExist", "Dispatcher Endpoints does not exist")
+			ac.Status.MarkEndpointsFailed("DispatcherEndpointsDoesNotExist", "Dispatcher Endpoints does not exist")
 		} else {
 			logger.Error("Unable to get the dispatcher endpoints", zap.Error(err))
-			kc.Status.MarkEndpointsFailed("DispatcherEndpointsGetFailed", "Failed to get dispatcher endpoints")
+			ac.Status.MarkEndpointsFailed("DispatcherEndpointsGetFailed", "Failed to get dispatcher endpoints")
 		}
 		return err
 	}
 
 	if len(e.Subsets) == 0 {
 		logger.Error("No endpoints found for Dispatcher service", zap.Error(err))
-		kc.Status.MarkEndpointsFailed("DispatcherEndpointsNotReady", "There are no endpoints ready for Dispatcher service")
+		ac.Status.MarkEndpointsFailed("DispatcherEndpointsNotReady", "There are no endpoints ready for Dispatcher service")
 		return fmt.Errorf("there are no endpoints ready for Dispatcher service %s", r.dispatcherServiceName)
 	}
-	kc.Status.MarkEndpointsTrue()
+	ac.Status.MarkEndpointsTrue()
 
 	// Reconcile the k8s service representing the actual Channel. It points to the Dispatcher service via ExternalName
-	svc, err := r.reconcileChannelService(ctx, kc)
+	svc, err := r.reconcileChannelService(ctx, ac)
 	if err != nil {
-		kc.Status.MarkChannelServiceFailed("ChannelServiceFailed", fmt.Sprintf("Channel Service failed: %s", err))
+		ac.Status.MarkChannelServiceFailed("ChannelServiceFailed", fmt.Sprintf("Channel Service failed: %s", err))
 		return err
 	}
-	kc.Status.MarkChannelServiceTrue()
-	kc.Status.SetAddress(&apis.URL{
+	ac.Status.MarkChannelServiceTrue()
+	ac.Status.SetAddress(&apis.URL{
 		Scheme: "http",
 		Host:   names.ServiceHostName(svc.Name, svc.Namespace),
 	})
 
-	if kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsUnknown() ||
-		kc.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsFalse() {
-		creds, err := r.KubeClientSet.CoreV1().Secrets(kc.Namespace).Get(kc.Spec.SecretName, metav1.GetOptions{})
+	if ac.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsUnknown() ||
+		ac.Status.GetCondition(v1alpha1.AzureChannelConditionHubReady).IsFalse() {
+		creds, err := r.KubeClientSet.CoreV1().Secrets(ac.Namespace).Get(ac.Spec.SecretName, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -294,7 +299,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 		if err != nil {
 			return err
 		}
-		if err := createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient); err != nil {
+		if err := createHub(ctx, ac.Spec.EventHubName, ac.Spec.EventHubRegion, azureClient); err != nil {
 			return err
 		}
 		ticker := time.NewTicker(time.Duration(3 * time.Minute))
@@ -306,10 +311,10 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 		default:
 			for {
 				if azureClient.Hub == nil {
-					return createHub(ctx, kc.Spec.EventHubName, kc.Spec.EventHubRegion, azureClient)
+					return createHub(ctx, ac.Spec.EventHubName, ac.Spec.EventHubRegion, azureClient)
 				}
 
-				model, err := azureClient.HubClient.Get(ctx, kc.Spec.EventHubName, kc.Spec.EventHubName, kc.Spec.EventHubName)
+				model, err := azureClient.HubClient.Get(ctx, ac.Spec.EventHubName, ac.Spec.EventHubName, ac.Spec.EventHubName)
 				if err != nil {
 					return err
 				}
@@ -322,7 +327,7 @@ func (r *Reconciler) reconcile(ctx context.Context, kc *v1alpha1.AzureChannel) e
 			}
 		}
 	}
-	kc.Status.MarkHubTrue()
+	ac.Status.MarkHubTrue()
 	return nil
 }
 

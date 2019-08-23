@@ -18,9 +18,12 @@ package v1alpha1
 
 import (
 	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
+	"github.com/knative/pkg/apis"
 	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
 	duckv1beta1 "github.com/knative/pkg/apis/duck/v1beta1"
+	"github.com/knative/pkg/webhook"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -35,6 +38,12 @@ type AzureChannel struct {
 	Spec   AzureChannelSpec   `json:"spec"`
 	Status AzureChannelStatus `json:"status,omitempty"`
 }
+
+// Check that Channel can be validated, can be defaulted, and has immutable fields.
+var _ apis.Validatable = (*AzureChannel)(nil)
+var _ apis.Defaultable = (*AzureChannel)(nil)
+var _ runtime.Object = (*AzureChannel)(nil)
+var _ webhook.GenericCRD = (*AzureChannel)(nil)
 
 // AzureChannelSpec is the spec for a AzureChannel resource
 type AzureChannelSpec struct {
