@@ -2,6 +2,14 @@
 
 Cluster channel provisioner provides Knative channels with [Azure Event Hub](https://docs.microsoft.com/en-us/azure/event-hubs/) as messaging backend.
 
+Create AzureChannel to connect to your Azure account. Currently only `hub region` is available for configuration. 
+
+The following happens after channel creation:
+1. Controller connects to Azure account with credentials obtained from secret 
+2. Controller creates all needed resources (`EventHub resource group`, `EventHub namespace`, `EventHub` and `SharedAccessPolicy` to connect to created Hub.) Note: all the titles are named after AzureChannel EventHubName spec property 
+3. When connection is established and all resources are created, dispatcher starts listening to Azure Event Hub and receive events. Once event is received it is dispatched among subscribers (if any)
+4. Post message to AzureChannel to send event to related Azure Event Hub. 
+
 ## Generating Code for Custom Controller 
 In case of any changes to types for the custom controller, use the following commands to regenerate client and deepcopy files
 
