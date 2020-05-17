@@ -131,7 +131,7 @@ func (conn *AzureEventHubClient) CreateOrUpdateHub(ctx context.Context, name, re
 		Rights: &[]eventhub.AccessRights{
 			eventhub.Listen,
 			eventhub.Manage,
-			eventhub.Send,
+			eventhub.SendEnumValue,
 		},
 	}
 

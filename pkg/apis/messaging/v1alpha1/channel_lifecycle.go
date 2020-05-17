@@ -17,13 +17,13 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/knative/pkg/apis"
-	"github.com/knative/pkg/apis/duck/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"knative.dev/pkg/apis"
+	"knative.dev/pkg/apis/duck/v1alpha1"
 )
 
-var kc = apis.NewLivingConditionSet(
+var ac = apis.NewLivingConditionSet(
 	AzureChannelConditionDispatcherReady,
 	AzureChannelConditionServiceReady,
 	AzureChannelConditionEndpointsReady,
@@ -64,17 +64,17 @@ const (
 
 // GetCondition returns the condition currently associated with the given type, or nil.
 func (cs *AzureChannelStatus) GetCondition(t apis.ConditionType) *apis.Condition {
-	return kc.Manage(cs).GetCondition(t)
+	return ac.Manage(cs).GetCondition(t)
 }
 
 // IsReady returns true if the resource is ready overall.
 func (cs *AzureChannelStatus) IsReady() bool {
-	return kc.Manage(cs).IsHappy()
+	return ac.Manage(cs).IsHappy()
 }
 
 // InitializeConditions sets relevant unset conditions to Unknown state.
 func (cs *AzureChannelStatus) InitializeConditions() {
-	kc.Manage(cs).InitializeConditions()
+	ac.Manage(cs).InitializeConditions()
 }
 
 // SetAddress sets the address (as part of Addressable contract) and marks the correct condition.
@@ -85,17 +85,12 @@ func (cs *AzureChannelStatus) SetAddress(url *apis.URL) {
 	if url != nil {
 		cs.Address.Hostname = url.Host
 		cs.Address.URL = url
-		kc.Manage(cs).MarkTrue(AzureChannelConditionAddressable)
+		ac.Manage(cs).MarkTrue(AzureChannelConditionAddressable)
 	} else {
 		cs.Address.Hostname = ""
 		cs.Address.URL = nil
-		kc.Manage(cs).MarkFalse(AzureChannelConditionAddressable, "EmptyHostname", "hostname is the empty string")
+		ac.Manage(cs).MarkFalse(AzureChannelConditionAddressable, "EmptyHostname", "hostname is the empty string")
 	}
-}
-
-//MarkDispatcherFailed marks channel dispatcher ready status failed
-func (cs *AzureChannelStatus) MarkDispatcherFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionDispatcherReady, reason, messageFormat, messageA...)
 }
 
 // TODO: Unify this with the ones from Eventing. Say: Broker, Trigger.
@@ -106,48 +101,61 @@ func (cs *AzureChannelStatus) PropagateDispatcherStatus(ds *appsv1.DeploymentSta
 			if cond.Status != corev1.ConditionTrue {
 				cs.MarkDispatcherFailed("DispatcherNotReady", "Dispatcher Deployment is not ready: %s : %s", cond.Reason, cond.Message)
 			} else {
-				kc.Manage(cs).MarkTrue(AzureChannelConditionDispatcherReady)
+				ac.Manage(cs).MarkTrue(AzureChannelConditionDispatcherReady)
 			}
 		}
 	}
 }
 
 //MarkDispatcherFailed marks channel dispatcher ready status failed
+func (cs *AzureChannelStatus) MarkDispatcherFailed(reason, messageFormat string, messageA ...interface{}) {
+	ac.Manage(cs).MarkFalse(AzureChannelConditionDispatcherReady, reason, messageFormat, messageA...)
+}
+
+func (cs *AzureChannelStatus) MarkDispatcherUnknown(reason, messageFormat string, messageA ...interface{}) {
+	ac.Manage(cs).MarkUnknown(AzureChannelConditionDispatcherReady, reason, messageFormat, messageA...)
+}
+
+//MarkDispatcherFailed marks channel dispatcher ready status failed
 func (cs *AzureChannelStatus) MarkServiceFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionServiceReady, reason, messageFormat, messageA...)
+	ac.Manage(cs).MarkFalse(AzureChannelConditionServiceReady, reason, messageFormat, messageA...)
+}
+
+func (cs *AzureChannelStatus) MarkServiceUnknown(reason, messageFormat string, messageA ...interface{}) {
+	ac.Manage(cs).MarkUnknown(AzureChannelConditionServiceReady, reason, messageFormat, messageA...)
 }
 
 //MarkDispatcherFailed marks channel dispatcher ready status failed
 func (cs *AzureChannelStatus) MarkServiceTrue() {
-	kc.Manage(cs).MarkTrue(AzureChannelConditionServiceReady)
+	ac.Manage(cs).MarkTrue(AzureChannelConditionServiceReady)
 }
 
 //MarkDispatcherFailed marks channel dispatcher ready status failed
 func (cs *AzureChannelStatus) MarkChannelServiceFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionChannelServiceReady, reason, messageFormat, messageA...)
+	ac.Manage(cs).MarkFalse(AzureChannelConditionChannelServiceReady, reason, messageFormat, messageA...)
 }
 
 //MarkDispatcherFailed marks channel dispatcher ready status failed
 func (cs *AzureChannelStatus) MarkChannelServiceTrue() {
-	kc.Manage(cs).MarkTrue(AzureChannelConditionChannelServiceReady)
+	ac.Manage(cs).MarkTrue(AzureChannelConditionChannelServiceReady)
 }
 
 //MarkEndpointsFailed marks channel endpoints ready status False
 func (cs *AzureChannelStatus) MarkEndpointsFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionEndpointsReady, reason, messageFormat, messageA...)
+	ac.Manage(cs).MarkFalse(AzureChannelConditionEndpointsReady, reason, messageFormat, messageA...)
 }
 
 //MarkEndpointsTrue marks channel endpoints ready status True
 func (cs *AzureChannelStatus) MarkEndpointsTrue() {
-	kc.Manage(cs).MarkTrue(AzureChannelConditionEndpointsReady)
+	ac.Manage(cs).MarkTrue(AzureChannelConditionEndpointsReady)
 }
 
 //MarkHubFailed marks channel ready status False
 func (cs *AzureChannelStatus) MarkHubFailed(reason, messageFormat string, messageA ...interface{}) {
-	kc.Manage(cs).MarkFalse(AzureChannelConditionHubReady, reason, messageFormat, messageA...)
+	ac.Manage(cs).MarkFalse(AzureChannelConditionHubReady, reason, messageFormat, messageA...)
 }
 
 //MarkHubTrue marks channel ready status True
 func (cs *AzureChannelStatus) MarkHubTrue() {
-	kc.Manage(cs).MarkTrue(AzureChannelConditionHubReady)
+	ac.Manage(cs).MarkTrue(AzureChannelConditionHubReady)
 }

@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/knative/pkg/apis"
+	"knative.dev/pkg/apis"
 )
 
 func (c *AzureChannel) Validate(ctx context.Context) *apis.FieldError {
@@ -30,13 +30,11 @@ func (c *AzureChannel) Validate(ctx context.Context) *apis.FieldError {
 func (cs *AzureChannelSpec) Validate(ctx context.Context) *apis.FieldError {
 	var errs *apis.FieldError
 
-	if cs.Subscribable != nil {
-		for i, subscriber := range cs.Subscribable.Subscribers {
-			if subscriber.ReplyURI == "" && subscriber.SubscriberURI == "" {
-				fe := apis.ErrMissingField("replyURI", "subscriberURI")
-				fe.Details = "expected at least one of, got none"
-				errs = errs.Also(fe.ViaField(fmt.Sprintf("subscriber[%d]", i)).ViaField("subscribable"))
-			}
+	for i, subscriber := range cs.Subscribers {
+		if subscriber.ReplyURI == nil && subscriber.SubscriberURI == nil {
+			fe := apis.ErrMissingField("replyURI", "subscriberURI")
+			fe.Details = "expected at least one of, got none"
+			errs = errs.Also(fe.ViaField(fmt.Sprintf("subscriber[%d]", i)).ViaField("subscribable"))
 		}
 	}
 
