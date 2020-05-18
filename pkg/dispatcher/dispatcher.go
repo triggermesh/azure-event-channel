@@ -18,35 +18,42 @@ package dispatcher
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	nethttp "net/http"
 	"sync"
 	"sync/atomic"
 
 	eventhub "github.com/Azure/azure-event-hubs-go"
-	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
-	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
-	"github.com/knative/eventing/pkg/logging"
-	"github.com/knative/eventing/pkg/provisioners"
+	"github.com/cloudevents/sdk-go/v2/binding"
+	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/lxc/lxd/shared/logger"
-	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
-	"github.com/triggermesh/azure-event-channel/pkg/util"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	eventingduckv1beta1 "knative.dev/eventing/pkg/apis/duck/v1beta1"
+	eventingchannels "knative.dev/eventing/pkg/channel"
+	"knative.dev/eventing/pkg/channel/multichannelfanout"
+	"knative.dev/eventing/pkg/logging"
+
+	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
+	"github.com/triggermesh/azure-event-channel/pkg/util"
 )
 
-// SubscriptionsSupervisor manages the state of Azure Streaming subscriptions
-type SubscriptionsSupervisor struct {
+// AzureDispatcher manages the state of Azure Streaming subscriptions
+type AzureDispatcher struct {
 	logger *zap.Logger
 
-	receiver   *provisioners.MessageReceiver
-	dispatcher *provisioners.MessageDispatcher
+	receiver   *eventingchannels.MessageReceiver
+	dispatcher *eventingchannels.MessageDispatcherImpl
 
 	mux           sync.Mutex
-	azureSessions map[provisioners.ChannelReference]client
-	subscriptions map[provisioners.ChannelReference]map[subscriptionReference]bool
+	azureSessions map[eventingchannels.ChannelReference]client
+	subscriptions map[eventingchannels.ChannelReference]map[subscriptionReference]bool
 
+	config           atomic.Value
 	hostToChannelMap atomic.Value
+
+	hostToChannelMapLock sync.Mutex
 }
 
 type client struct {
@@ -54,20 +61,47 @@ type client struct {
 	AzureEventHubClient *util.AzureEventHubClient
 }
 
-// NewDispatcher returns a new SubscriptionsSupervisor.
-func NewDispatcher(logger *zap.Logger) (*SubscriptionsSupervisor, error) {
-	d := &SubscriptionsSupervisor{
+// NewDispatcher returns a new AzureDispatcher.
+func NewDispatcher(ctx context.Context) (*AzureDispatcher, error) {
+	logger := logging.FromContext(ctx)
+
+	d := &AzureDispatcher{
 		logger:        logger,
-		dispatcher:    provisioners.NewMessageDispatcher(logger.Sugar()),
-		azureSessions: make(map[provisioners.ChannelReference]client),
-		subscriptions: make(map[provisioners.ChannelReference]map[subscriptionReference]bool),
+		dispatcher:    eventingchannels.NewMessageDispatcher(logger),
+		azureSessions: make(map[eventingchannels.ChannelReference]client),
+		subscriptions: make(map[eventingchannels.ChannelReference]map[subscriptionReference]bool),
 	}
-	d.setHostToChannelMap(map[string]provisioners.ChannelReference{})
-	receiver, err := provisioners.NewMessageReceiver(
-		// not sure where to get context
-		createReceiverFunction(context.Background(), d, logger.Sugar()),
-		logger.Sugar(),
-		provisioners.ResolveChannelFromHostHeader(provisioners.ResolveChannelFromHostFunc(d.getChannelReferenceFromHost)))
+	d.setHostToChannelMap(map[string]eventingchannels.ChannelReference{})
+
+	receiver, err := eventingchannels.NewMessageReceiver(
+		func(ctx context.Context, channel eventingchannels.ChannelReference, m binding.Message, transformers []binding.Transformer, _ nethttp.Header) error {
+			logger.Sugar().Infof("Received message from %q channel", channel.String())
+			// publish to azure
+			event, err := binding.ToEvent(ctx, m)
+			if err != nil {
+				logger.Sugar().Errorf("Can't convert message to event: %v", err)
+				return err
+			}
+			eventPayload, err := event.MarshalJSON()
+			if err != nil {
+				logger.Sugar().Errorf("Can't encode event: %v", err)
+				return err
+			}
+			cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
+			client, present := d.azureSessions[cRef]
+			if !present {
+				logger.Sugar().Errorf("Azure session not initialized")
+				return err
+			}
+			if err := client.AzureEventHubClient.Hub.Send(ctx, eventhub.NewEvent(eventPayload)); err != nil {
+				logger.Sugar().Errorf("Error during publish: %v", err)
+				return err
+			}
+			logger.Sugar().Infof("Published to %q azure event hub", channel.String())
+			return nil
+		},
+		logger,
+		eventingchannels.ResolveMessageChannelFromHostHeader(d.getChannelReferenceFromHost))
 	if err != nil {
 		return nil, err
 	}
@@ -75,43 +109,22 @@ func NewDispatcher(logger *zap.Logger) (*SubscriptionsSupervisor, error) {
 	return d, nil
 }
 
-func createReceiverFunction(ctx context.Context, s *SubscriptionsSupervisor, logger *zap.SugaredLogger) func(provisioners.ChannelReference, *provisioners.Message) error {
-	return func(channel provisioners.ChannelReference, m *provisioners.Message) error {
-		logger.Infof("Received message from %q channel", channel.String())
-		// publish to azure
-		message, err := json.Marshal(m)
-		if err != nil {
-			logger.Errorf("Error during marshaling of the message: %v", err)
-			return err
-		}
-		cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-		client, present := s.azureSessions[cRef]
-		if !present {
-			logger.Errorf("Azure session not initialized")
-			return err
-		}
-		if err := client.AzureEventHubClient.Hub.Send(ctx, eventhub.NewEvent(message)); err != nil {
-			logger.Errorf("Error during publish: %v", err)
-			return err
-		}
-		logger.Infof("Published [%s] : '%s'", channel.String(), m.Headers)
-		return nil
-	}
-}
-
 //Start starts reciever
-func (s *SubscriptionsSupervisor) Start(stopCh <-chan struct{}) error {
-	return s.receiver.Start(stopCh)
+func (s *AzureDispatcher) Start(ctx context.Context) error {
+	if s.receiver == nil {
+		return fmt.Errorf("message receiver is not set")
+	}
+	return s.receiver.Start(ctx)
 }
 
 // UpdateSubscriptions creates/deletes the azure subscriptions based on channel.Spec.Subscribable.Subscribers
-func (s *SubscriptionsSupervisor) UpdateSubscriptions(ctx context.Context, channel *v1alpha1.AzureChannel, isFinalizer bool) (map[eventingduck.SubscriberSpec]error, error) {
+func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1alpha1.AzureChannel, isFinalizer bool) (map[eventingduckv1beta1.SubscriberSpec]error, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
-	failedToSubscribe := make(map[eventingduck.SubscriberSpec]error)
-	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-	if channel.Spec.Subscribable == nil || isFinalizer {
+	failedToSubscribe := make(map[eventingduckv1beta1.SubscriberSpec]error)
+	cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
+	if len(channel.Spec.Subscribers) == 0 || isFinalizer {
 		s.logger.Sugar().Infof("Empty subscriptions for channel Ref: %v; unsubscribe all active subscriptions, if any", cRef)
 		chMap, ok := s.subscriptions[cRef]
 		if !ok {
@@ -126,7 +139,7 @@ func (s *SubscriptionsSupervisor) UpdateSubscriptions(ctx context.Context, chann
 		return failedToSubscribe, nil
 	}
 
-	subscriptions := channel.Spec.Subscribable.Subscribers
+	subscriptions := channel.Spec.Subscribers
 	activeSubs := make(map[subscriptionReference]bool) // it's logically a set
 
 	chMap, ok := s.subscriptions[cRef]
@@ -167,25 +180,37 @@ func (s *SubscriptionsSupervisor) UpdateSubscriptions(ctx context.Context, chann
 	return failedToSubscribe, nil
 }
 
-func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisioners.ChannelReference, subscription subscriptionReference) error {
+func (s *AzureDispatcher) subscribe(ctx context.Context, channel eventingchannels.ChannelReference, subscription subscriptionReference) error {
 	s.logger.Info("Subscribe to eventhub:", zap.Any("channel", channel), zap.Any("subscription", subscription))
-	for k, v := range s.azureSessions {
-		s.logger.Info("Azure sessions:", zap.Any("key", k), zap.Any("val", v))
-	}
+
 	session, present := s.azureSessions[channel]
 	if !present {
 		s.logger.Error("Azure session not found:", zap.Any("channel", channel))
 		return fmt.Errorf("Azure session for channel %q not found", channel.String())
 	}
 
-	handler := func(c context.Context, event *eventhub.Event) error {
-		s.logger.Info("New event!", zap.Any("data", string(event.Data)))
+	handler := func(c context.Context, azureEvent *eventhub.Event) error {
+		s.logger.Info("New event!", zap.Any("data", string(azureEvent.Data)))
 
-		return s.dispatcher.DispatchMessage(&provisioners.Message{
-			Payload: event.Data,
-		}, subscription.SubscriberURI, subscription.ReplyURI, provisioners.DispatchDefaults{
-			Namespace: channel.Namespace,
-		})
+		e := event.New(event.CloudEventsVersionV1)
+		err := e.UnmarshalJSON(azureEvent.Data)
+		if err != nil {
+			s.logger.Error("Can't decode event", zap.Error(err))
+			return err
+		}
+		err = e.Validate()
+		if err != nil {
+			s.logger.Error("Event validation error", zap.Error(err))
+			return err
+		}
+		return s.dispatcher.DispatchMessage(
+			context.Background(),
+			binding.ToMessage(&e),
+			nil,
+			subscription.SubscriberURI.URL(),
+			subscription.ReplyURI.URL(),
+			nil,
+		)
 	}
 
 	// listen to each partition of the Event Hub
@@ -204,7 +229,7 @@ func (s *SubscriptionsSupervisor) subscribe(ctx context.Context, channel provisi
 }
 
 // should be called only while holding subscriptionsMux
-func (s *SubscriptionsSupervisor) unsubscribe(ctx context.Context, channel provisioners.ChannelReference, subscription subscriptionReference) error {
+func (s *AzureDispatcher) unsubscribe(ctx context.Context, channel eventingchannels.ChannelReference, subscription subscriptionReference) error {
 	s.logger.Info("Unsubscribe from channel:", zap.Any("channel", channel), zap.Any("subscription", subscription))
 
 	if _, ok := s.subscriptions[channel][subscription]; ok {
@@ -213,29 +238,52 @@ func (s *SubscriptionsSupervisor) unsubscribe(ctx context.Context, channel provi
 	return nil
 }
 
-func (s *SubscriptionsSupervisor) getHostToChannelMap() map[string]provisioners.ChannelReference {
-	return s.hostToChannelMap.Load().(map[string]provisioners.ChannelReference)
+func (s *AzureDispatcher) getHostToChannelMap() map[string]eventingchannels.ChannelReference {
+	return s.hostToChannelMap.Load().(map[string]eventingchannels.ChannelReference)
 }
 
-func (s *SubscriptionsSupervisor) setHostToChannelMap(hcMap map[string]provisioners.ChannelReference) {
+func (s *AzureDispatcher) setHostToChannelMap(hcMap map[string]eventingchannels.ChannelReference) {
 	s.hostToChannelMap.Store(hcMap)
 }
 
 // UpdateHostToChannelMap will be called from the controller that watches azure channels.
 // It will update internal hostToChannelMap which is used to resolve the hostHeader of the
 // incoming request to the correct ChannelReference in the receiver function.
-func (s *SubscriptionsSupervisor) UpdateHostToChannelMap(ctx context.Context, chanList []eventingv1alpha1.Channel) error {
-	hostToChanMap, err := provisioners.NewHostNameToChannelRefMap(chanList)
+func (s *AzureDispatcher) UpdateHostToChannelMap(config *multichannelfanout.Config) error {
+	if config == nil {
+		return errors.New("nil config")
+	}
+
+	s.hostToChannelMapLock.Lock()
+	defer s.hostToChannelMapLock.Unlock()
+
+	hcMap, err := createHostToChannelMap(config)
 	if err != nil {
-		logging.FromContext(ctx).Info("UpdateHostToChannelMap: Error occurred when creating the new hostToChannel map.", zap.Error(err))
 		return err
 	}
-	s.setHostToChannelMap(hostToChanMap)
-	logging.FromContext(ctx).Info("hostToChannelMap updated successfully.")
+
+	s.setHostToChannelMap(hcMap)
 	return nil
 }
 
-func (s *SubscriptionsSupervisor) getChannelReferenceFromHost(host string) (provisioners.ChannelReference, error) {
+func createHostToChannelMap(config *multichannelfanout.Config) (map[string]eventingchannels.ChannelReference, error) {
+	hcMap := make(map[string]eventingchannels.ChannelReference, len(config.ChannelConfigs))
+	for _, cConfig := range config.ChannelConfigs {
+		if cr, ok := hcMap[cConfig.HostName]; ok {
+			return nil, fmt.Errorf(
+				"duplicate hostName found. Each channel must have a unique host header. HostName:%s, channel:%s.%s, channel:%s.%s",
+				cConfig.HostName,
+				cConfig.Namespace,
+				cConfig.Name,
+				cr.Namespace,
+				cr.Name)
+		}
+		hcMap[cConfig.HostName] = eventingchannels.ChannelReference{Name: cConfig.Name, Namespace: cConfig.Namespace}
+	}
+	return hcMap, nil
+}
+
+func (s *AzureDispatcher) getChannelReferenceFromHost(host string) (eventingchannels.ChannelReference, error) {
 	chMap := s.getHostToChannelMap()
 	cr, ok := chMap[host]
 	if !ok {
@@ -245,16 +293,16 @@ func (s *SubscriptionsSupervisor) getChannelReferenceFromHost(host string) (prov
 }
 
 //AzureSessionExist checks if azure session exists
-func (s *SubscriptionsSupervisor) AzureSessionExist(ctx context.Context, channel *v1alpha1.AzureChannel) bool {
+func (s *AzureDispatcher) AzureSessionExist(ctx context.Context, channel *v1alpha1.AzureChannel) bool {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
+	cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
 	_, present := s.azureSessions[cRef]
 	return present
 }
 
 //CreateAzureSession creates azure session
-func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel, secret *corev1.Secret) error {
+func (s *AzureDispatcher) CreateAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel, secret *corev1.Secret) error {
 	if s.AzureSessionExist(ctx, channel) {
 		return nil
 	}
@@ -269,7 +317,7 @@ func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channe
 
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
+	cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
 
 	s.azureSessions[cRef] = client{
 		HubName:             channel.Spec.EventHubName,
@@ -280,16 +328,16 @@ func (s *SubscriptionsSupervisor) CreateAzureSession(ctx context.Context, channe
 }
 
 //DeleteAzureSession removes azure session
-func (s *SubscriptionsSupervisor) DeleteAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel) {
+func (s *AzureDispatcher) DeleteAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
-	cRef := provisioners.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
+	cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
 	if _, present := s.azureSessions[cRef]; present {
 		delete(s.azureSessions, cRef)
 	}
 }
 
-func (s *SubscriptionsSupervisor) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
+func (s *AzureDispatcher) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
 	logger := logging.FromContext(ctx)
 
 	logger.Info("Creating new Azure Eventhub Client")

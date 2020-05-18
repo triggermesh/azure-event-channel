@@ -17,17 +17,17 @@ limitations under the License.
 package v1alpha1
 
 import (
-	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
-	"github.com/knative/pkg/apis"
-	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
-	duckv1beta1 "github.com/knative/pkg/apis/duck/v1beta1"
-	"github.com/knative/pkg/webhook"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	eventingduckv1beta1 "knative.dev/eventing/pkg/apis/duck/v1beta1"
+	"knative.dev/pkg/apis"
+	duckv1alpha1 "knative.dev/pkg/apis/duck/v1alpha1"
+	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
 )
 
 // +genclient
+// +genreconciler
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // AzureChannel is a specification for a AzureChannel resource
@@ -43,14 +43,13 @@ type AzureChannel struct {
 var _ apis.Validatable = (*AzureChannel)(nil)
 var _ apis.Defaultable = (*AzureChannel)(nil)
 var _ runtime.Object = (*AzureChannel)(nil)
-var _ webhook.GenericCRD = (*AzureChannel)(nil)
 
 // AzureChannelSpec is the spec for a AzureChannel resource
 type AzureChannelSpec struct {
-	Subscribable   *eventingduck.Subscribable `json:"subscribable,omitempty"`
-	EventHubName   string                     `json:"event_hub_name"`
-	EventHubRegion string                     `json:"event_hub_region"`
-	SecretName     string                     `json:"secret_name"`
+	eventingduckv1beta1.SubscribableSpec `json:",inline"`
+	EventHubName                         string `json:"event_hub_name"`
+	EventHubRegion                       string `json:"event_hub_region"`
+	SecretName                           string `json:"secret_name"`
 }
 
 // AzureChannelStatus is the status for a AzureChannel resource
@@ -68,7 +67,7 @@ type AzureChannelStatus struct {
 	duckv1alpha1.AddressStatus `json:",inline"`
 
 	// Subscribers is populated with the statuses of each of the Channelable's subscribers.
-	eventingduck.SubscribableTypeStatus `json:",inline"`
+	eventingduckv1beta1.SubscribableStatus `json:",inline"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

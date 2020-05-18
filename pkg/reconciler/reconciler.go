@@ -3,11 +3,8 @@ package reconciler
 import (
 	"time"
 
-	"github.com/knative/pkg/configmap"
-	"github.com/knative/pkg/logging/logkey"
-	"github.com/knative/pkg/system"
-	clientset "github.com/triggermesh/azure-event-channel/pkg/client/clientset/versioned"
-	azureScheme "github.com/triggermesh/azure-event-channel/pkg/client/clientset/versioned/scheme"
+	clientset "github.com/triggermesh/azure-event-channel/pkg/client/clientset/internalclientset"
+	azureScheme "github.com/triggermesh/azure-event-channel/pkg/client/clientset/internalclientset/scheme"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -17,6 +14,9 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/logging/logkey"
+	"knative.dev/pkg/system"
 
 	// Uncomment the following line to load the gcp plugin (only required to authenticate against GKE clusters).
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"

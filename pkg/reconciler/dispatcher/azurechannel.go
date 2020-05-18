@@ -23,24 +23,31 @@ import (
 	"reflect"
 	"strings"
 
-	eventingduck "github.com/knative/eventing/pkg/apis/duck/v1alpha1"
-	eventingv1alpha1 "github.com/knative/eventing/pkg/apis/eventing/v1alpha1"
-	"github.com/knative/eventing/pkg/logging"
-	"github.com/knative/pkg/controller"
-	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
-	messaginginformers "github.com/triggermesh/azure-event-channel/pkg/client/informers/externalversions/messaging/v1alpha1"
-	listers "github.com/triggermesh/azure-event-channel/pkg/client/listers/messaging/v1alpha1"
-	"github.com/triggermesh/azure-event-channel/pkg/dispatcher"
-	"github.com/triggermesh/azure-event-channel/pkg/reconciler"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
+	eventingduckv1beta1 "knative.dev/eventing/pkg/apis/duck/v1beta1"
+	"knative.dev/eventing/pkg/channel/fanout"
+	"knative.dev/eventing/pkg/channel/multichannelfanout"
+	"knative.dev/eventing/pkg/logging"
+	"knative.dev/pkg/client/injection/kube/informers/core/v1/secret"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
+
+	"github.com/triggermesh/azure-event-channel/pkg/apis/messaging/v1alpha1"
+	azureClientSet "github.com/triggermesh/azure-event-channel/pkg/client/clientset/internalclientset"
+	"github.com/triggermesh/azure-event-channel/pkg/client/clientset/internalclientset/scheme"
+	azureScheme "github.com/triggermesh/azure-event-channel/pkg/client/clientset/internalclientset/scheme"
+	azureclient "github.com/triggermesh/azure-event-channel/pkg/client/injection/client"
+	"github.com/triggermesh/azure-event-channel/pkg/client/injection/informers/messaging/v1alpha1/azurechannel"
+	listers "github.com/triggermesh/azure-event-channel/pkg/client/listers/messaging/v1alpha1"
+	"github.com/triggermesh/azure-event-channel/pkg/dispatcher"
 )
 
 const (
@@ -52,42 +59,65 @@ const (
 	controllerAgentName = "azure-ch-dispatcher"
 
 	finalizerName = controllerAgentName
+
+	channelReconciled         = "ChannelReconciled"
+	channelReconcileFailed    = "ChannelReconcileFailed"
+	channelUpdateStatusFailed = "ChannelUpdateStatusFailed"
 )
 
 // Reconciler reconciles Azure Channels.
 type Reconciler struct {
-	*reconciler.Base
+	recorder record.EventRecorder
 
-	azureDispatcher *dispatcher.SubscriptionsSupervisor
+	azureDispatcher *dispatcher.AzureDispatcher
 
-	azurechannelLister   listers.AzureChannelLister
-	azurechannelInformer cache.SharedIndexInformer
-	impl                 *controller.Impl
+	azureClientSet     azureClientSet.Interface
+	azurechannelLister listers.AzureChannelLister
+	secretLister       corev1listers.SecretLister
+	impl               *controller.Impl
 }
 
 // Check that our Reconciler implements controller.Reconciler.
 var _ controller.Reconciler = (*Reconciler)(nil)
 
+func init() {
+	// Add run types to the default Kubernetes Scheme so Events can be
+	// logged for run types.
+	_ = azureScheme.AddToScheme(scheme.Scheme)
+}
+
 // NewController initializes the controller and is called by the generated code.
 // Registers event handlers to enqueue events.
-func NewController(
-	opt reconciler.Options,
-	azureDispatcher *dispatcher.SubscriptionsSupervisor,
-	azurechannelInformer messaginginformers.AzureChannelInformer,
-) *controller.Impl {
+func NewController(ctx context.Context, _ configmap.Watcher) *controller.Impl {
+	logger := logging.FromContext(ctx)
+
+	dispatcher, _ := dispatcher.NewDispatcher(ctx)
+
+	azurechannelInformer := azurechannel.Get(ctx)
+	secretsInformer := secret.Get(ctx)
 
 	r := &Reconciler{
-		Base:                 reconciler.NewBase(opt, controllerAgentName),
-		azureDispatcher:      azureDispatcher,
-		azurechannelLister:   azurechannelInformer.Lister(),
-		azurechannelInformer: azurechannelInformer.Informer(),
-	}
-	r.impl = controller.NewImpl(r, r.Logger, ReconcilerName)
+		recorder: controller.GetEventRecorder(ctx),
 
-	r.Logger.Info("Setting up event handlers")
+		azureDispatcher: dispatcher,
+
+		azureClientSet:     azureclient.Get(ctx),
+		azurechannelLister: azurechannelInformer.Lister(),
+		secretLister:       secretsInformer.Lister(),
+	}
+	r.impl = controller.NewImpl(r, logger.Sugar(), ReconcilerName)
+
+	logger.Info("Setting up event handlers")
 
 	// Watch for Azure channels.
 	azurechannelInformer.Informer().AddEventHandler(controller.HandleAll(r.impl.Enqueue))
+
+	logger.Info("Starting dispatcher")
+	go func() {
+		if err := dispatcher.Start(ctx); err != nil {
+			logger.Error("Cannot start dispatcher", zap.Error(err))
+		}
+	}()
 
 	return r.impl
 }
@@ -99,8 +129,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 		logging.FromContext(ctx).Error("invalid resource key")
 		return nil
 	}
-
-	logging.FromContext(ctx).Info("Azure Channel Info", zap.Any("namespace", namespace), zap.Any("name", name))
 
 	// Get the AzureChannel resource with this namespace/name.
 	original, err := r.azurechannelLister.AzureChannels(namespace).Get(name)
@@ -128,9 +156,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	// TODO: Should this check for subscribable status rather than entire status?
 	if _, updateStatusErr := r.updateStatus(ctx, azureChannel); updateStatusErr != nil {
 		logging.FromContext(ctx).Error("Failed to update AzureChannel status", zap.Error(updateStatusErr))
+		r.recorder.Eventf(azureChannel, corev1.EventTypeWarning, channelUpdateStatusFailed, "Failed to update KinesisChannel's status: %v", updateStatusErr)
 		return updateStatusErr
 	}
-	return nil
+	return reconcileErr
 }
 
 func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.AzureChannel) error {
@@ -144,7 +173,7 @@ func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.Azure
 		}
 		r.azureDispatcher.DeleteAzureSession(ctx, azureChannel)
 		removeFinalizer(azureChannel)
-		_, err := r.AzureClientSet.MessagingV1alpha1().AzureChannels(azureChannel.Namespace).Update(azureChannel)
+		_, err := r.azureClientSet.MessagingV1alpha1().AzureChannels(azureChannel.Namespace).Update(azureChannel)
 		return err
 	}
 
@@ -155,7 +184,7 @@ func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.Azure
 	}
 
 	if !r.azureDispatcher.AzureSessionExist(ctx, azureChannel) {
-		secret, err := r.KubeClientSet.CoreV1().Secrets(azureChannel.Namespace).Get(azureChannel.Spec.SecretName, metav1.GetOptions{})
+		secret, err := r.secretLister.Secrets(azureChannel.Namespace).Get(azureChannel.Spec.SecretName)
 		if err != nil {
 			return err
 		}
@@ -170,7 +199,7 @@ func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.Azure
 		logging.FromContext(ctx).Error("Error updating subscriptions", zap.Any("channel", azureChannel), zap.Error(err))
 		return err
 	}
-	azureChannel.Status.SubscribableStatus = r.createSubscribableStatus(azureChannel.Spec.Subscribable, failedSubscriptions)
+	azureChannel.Status.SubscribableStatus = r.createSubscribableStatus(azureChannel.Spec.SubscribableSpec, failedSubscriptions)
 	if len(failedSubscriptions) > 0 {
 		var b strings.Builder
 		for _, subError := range failedSubscriptions {
@@ -188,27 +217,29 @@ func (r *Reconciler) reconcile(ctx context.Context, azureChannel *v1alpha1.Azure
 		return err
 	}
 
-	channels := make([]eventingv1alpha1.Channel, 0)
+	channels := make([]*v1alpha1.AzureChannel, 0)
 	for _, nc := range azureChannels {
 		if nc.Status.IsReady() {
-			channels = append(channels, *toChannel(nc))
+			channels = append(channels, nc)
 		}
 	}
 
-	if err := r.azureDispatcher.UpdateHostToChannelMap(ctx, channels); err != nil {
+	config := r.newConfigFromAzureChannels(channels)
+
+	if err := r.azureDispatcher.UpdateHostToChannelMap(config); err != nil {
 		logging.FromContext(ctx).Error("Error updating host to channel map", zap.Error(err))
 		return err
 	}
 	return nil
 }
 
-func (r *Reconciler) createSubscribableStatus(subscribable *eventingduck.Subscribable, failedSubscriptions map[eventingduck.SubscriberSpec]error) *eventingduck.SubscribableStatus {
-	if subscribable == nil {
-		return nil
+func (r *Reconciler) createSubscribableStatus(subscribable eventingduckv1beta1.SubscribableSpec, failedSubscriptions map[eventingduckv1beta1.SubscriberSpec]error) eventingduckv1beta1.SubscribableStatus {
+	if len(subscribable.Subscribers) == 0 {
+		return eventingduckv1beta1.SubscribableStatus{}
 	}
-	subscriberStatus := make([]eventingduck.SubscriberStatus, 0)
+	subscriberStatus := make([]eventingduckv1beta1.SubscriberStatus, 0)
 	for _, sub := range subscribable.Subscribers {
-		status := eventingduck.SubscriberStatus{
+		status := eventingduckv1beta1.SubscriberStatus{
 			UID:                sub.UID,
 			ObservedGeneration: sub.Generation,
 			Ready:              corev1.ConditionTrue,
@@ -219,11 +250,10 @@ func (r *Reconciler) createSubscribableStatus(subscribable *eventingduck.Subscri
 		}
 		subscriberStatus = append(subscriberStatus, status)
 	}
-	return &eventingduck.SubscribableStatus{
+	return eventingduckv1beta1.SubscribableStatus{
 		Subscribers: subscriberStatus,
 	}
 }
-
 func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureChannel) (*v1alpha1.AzureChannel, error) {
 	nc, err := r.azurechannelLister.AzureChannels(desired.Namespace).Get(desired.Name)
 	if err != nil {
@@ -238,7 +268,7 @@ func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureCh
 	existing := nc.DeepCopy()
 	existing.Status = desired.Status
 
-	return r.AzureClientSet.MessagingV1alpha1().AzureChannels(desired.Namespace).UpdateStatus(existing)
+	return r.azureClientSet.MessagingV1alpha1().AzureChannels(desired.Namespace).UpdateStatus(existing)
 }
 
 func (r *Reconciler) ensureFinalizer(channel *v1alpha1.AzureChannel) error {
@@ -259,7 +289,7 @@ func (r *Reconciler) ensureFinalizer(channel *v1alpha1.AzureChannel) error {
 		return err
 	}
 
-	_, err = r.AzureClientSet.MessagingV1alpha1().AzureChannels(channel.Namespace).Patch(channel.Name, types.MergePatchType, patch)
+	_, err = r.azureClientSet.MessagingV1alpha1().AzureChannels(channel.Namespace).Patch(channel.Name, types.MergePatchType, patch)
 	return err
 }
 
@@ -269,20 +299,30 @@ func removeFinalizer(channel *v1alpha1.AzureChannel) {
 	channel.Finalizers = finalizers.List()
 }
 
-func toChannel(azureChannel *v1alpha1.AzureChannel) *eventingv1alpha1.Channel {
-	channel := &eventingv1alpha1.Channel{
-		ObjectMeta: v1.ObjectMeta{
-			Name:      azureChannel.Name,
-			Namespace: azureChannel.Namespace,
-		},
-		Spec: eventingv1alpha1.ChannelSpec{
-			Subscribable: azureChannel.Spec.Subscribable,
-		},
+// newConfigFromAzureChannels creates a new Config from the list of azure channels.
+func (r *Reconciler) newConfigFromAzureChannels(channels []*v1alpha1.AzureChannel) *multichannelfanout.Config {
+	cc := make([]multichannelfanout.ChannelConfig, 0)
+	for _, c := range channels {
+		channelConfig := r.newChannelConfigFromAzureChannel(c)
+		cc = append(cc, *channelConfig)
 	}
-	if azureChannel.Status.Address != nil {
-		channel.Status = eventingv1alpha1.ChannelStatus{
-			Address: *azureChannel.Status.Address,
+	return &multichannelfanout.Config{
+		ChannelConfigs: cc,
+	}
+}
+
+// newConfigFromAzureChannels creates a new Config from the list of azure channels.
+func (r *Reconciler) newChannelConfigFromAzureChannel(c *v1alpha1.AzureChannel) *multichannelfanout.ChannelConfig {
+	channelConfig := multichannelfanout.ChannelConfig{
+		Namespace: c.Namespace,
+		Name:      c.Name,
+		HostName:  c.Status.Address.Hostname,
+	}
+	if c.Spec.Subscribers != nil {
+		channelConfig.FanoutConfig = fanout.Config{
+			AsyncHandler:  true,
+			Subscriptions: c.Spec.Subscribers,
 		}
 	}
-	return channel
+	return &channelConfig
 }
