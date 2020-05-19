@@ -102,17 +102,19 @@ jobs:
           name: Cloning config repository
           command: git clone -b << parameters.branch >> --single-branch git@github.com:triggermesh/config.git tmconfig
       - run:
-          name: Updating overlays/<< parameters.cluster >>/channels/azure-event manifests
+          name: Updating overlays/<< parameters.cluster >>/channels manifests
           working_directory: tmconfig/
           command: |
-            sed "s/_IMAGE_TAG_/${CIRCLE_TAG:-${CIRCLE_SHA1}}/g" overlays/<< parameters.cluster >>/channels/azure-event/deployment.yaml.PATTERN > overlays/<< parameters.cluster >>/channels/azure-event/deployment.yaml
+            sed -i overlays/<< parameters.cluster >>/channels/deployments.yaml \
+              -e "s|gcr.io/triggermesh/azure-event-channel-controller:.*|gcr.io/triggermesh/azure-event-channel-controller:"${CIRCLE_TAG:-${CIRCLE_SHA1}}"|g" \
+              -e "s|gcr.io/triggermesh/azure-event-channel-dispatcher:.*|gcr.io/triggermesh/azure-event-channel-dispatcher:"${CIRCLE_TAG:-${CIRCLE_SHA1}}"|g"
             git --no-pager diff
       - run:
-          name: Committing overlays/<< parameters.cluster >>/channels/azure-event updates
+          name: Committing overlays/<< parameters.cluster >>/channels updates
           working_directory: tmconfig/
           command: |
             git add overlays
-            git commit -m "Update overlays/<< parameters.cluster >>/channels/azure-event manifest to '${CIRCLE_TAG:-${CIRCLE_SHA1}}'"
+            git commit -m "Update overlays/<< parameters.cluster >>/channels azure-event deployment to '${CIRCLE_TAG:-${CIRCLE_SHA1}}'"
             git push origin << parameters.branch >>
 
   release:
