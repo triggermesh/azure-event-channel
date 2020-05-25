@@ -80,9 +80,6 @@ cover: test ## Generate code coverage
 lint: install-golangci-lint ## Lint source files
 	$(GOLINT) $(GOPKGS)
 
-vet: ## Vet source files
-	$(GO) vet $(GOPKGS)
-
 fmt: ## Format source files
 	$(GOFMT) -s -w $(shell $(GO) list -f '{{$$d := .Dir}}{{range .GoFiles}}{{$$d}}/{{.}} {{end}} {{$$d := .Dir}}{{range .TestGoFiles}}{{$$d}}/{{.}} {{end}}' $(GOPKGS))
 

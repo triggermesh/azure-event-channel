@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// MakeDispatcherService creates the Azure dispatcher service
+// MakeDispatcherService creates the Azure dispatcher service.
 func MakeDispatcherService(namespace string) *corev1.Service {
 	return &corev1.Service{
 		TypeMeta: metav1.TypeMeta{

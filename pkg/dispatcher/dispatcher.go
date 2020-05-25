@@ -39,7 +39,7 @@ import (
 	"github.com/triggermesh/azure-event-channel/pkg/util"
 )
 
-// AzureDispatcher manages the state of Azure Streaming subscriptions
+// AzureDispatcher manages the state of Azure Streaming subscriptions.
 type AzureDispatcher struct {
 	logger *zap.Logger
 
@@ -50,7 +50,6 @@ type AzureDispatcher struct {
 	azureSessions map[eventingchannels.ChannelReference]client
 	subscriptions map[eventingchannels.ChannelReference]map[subscriptionReference]bool
 
-	config           atomic.Value
 	hostToChannelMap atomic.Value
 
 	hostToChannelMapLock sync.Mutex
@@ -109,7 +108,7 @@ func NewDispatcher(ctx context.Context) (*AzureDispatcher, error) {
 	return d, nil
 }
 
-//Start starts reciever
+// Start receiver.
 func (s *AzureDispatcher) Start(ctx context.Context) error {
 	if s.receiver == nil {
 		return fmt.Errorf("message receiver is not set")
@@ -117,7 +116,7 @@ func (s *AzureDispatcher) Start(ctx context.Context) error {
 	return s.receiver.Start(ctx)
 }
 
-// UpdateSubscriptions creates/deletes the azure subscriptions based on channel.Spec.Subscribable.Subscribers
+// UpdateSubscriptions creates/deletes the azure subscriptions based on channel.Spec.Subscribable.Subscribers.
 func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1alpha1.AzureChannel, isFinalizer bool) (map[eventingduckv1beta1.SubscriberSpec]error, error) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -133,7 +132,7 @@ func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1al
 			return failedToSubscribe, nil
 		}
 		for sub := range chMap {
-			s.unsubscribe(ctx, cRef, sub)
+			s.unsubscribe(cRef, sub)
 		}
 		delete(s.subscriptions, cRef)
 		return failedToSubscribe, nil
@@ -147,7 +146,7 @@ func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1al
 		chMap = make(map[subscriptionReference]bool)
 		s.subscriptions[cRef] = chMap
 	}
-	var errStrings []string
+
 	for _, sub := range subscriptions {
 		// check if the subscription already exist and do nothing in this case
 		subRef := newSubscriptionReference(sub)
@@ -159,7 +158,6 @@ func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1al
 		// subscribe and update failedSubscription if subscribe fails
 		err := s.subscribe(ctx, cRef, subRef)
 		if err != nil {
-			errStrings = append(errStrings, err.Error())
 			s.logger.Sugar().Errorf("failed to subscribe (subscription:%q) to channel: %v. Error:%s", sub, cRef, err.Error())
 			failedToSubscribe[sub] = err
 			continue
@@ -170,7 +168,7 @@ func (s *AzureDispatcher) UpdateSubscriptions(ctx context.Context, channel *v1al
 	// Unsubscribe for deleted subscriptions
 	for sub := range chMap {
 		if ok := activeSubs[sub]; !ok {
-			s.unsubscribe(ctx, cRef, sub)
+			s.unsubscribe(cRef, sub)
 		}
 	}
 	// delete the channel from s.subscriptions if chMap is empty
@@ -186,7 +184,7 @@ func (s *AzureDispatcher) subscribe(ctx context.Context, channel eventingchannel
 	session, present := s.azureSessions[channel]
 	if !present {
 		s.logger.Error("Azure session not found:", zap.Any("channel", channel))
-		return fmt.Errorf("Azure session for channel %q not found", channel.String())
+		return fmt.Errorf("azure session for channel %q not found", channel.String())
 	}
 
 	handler := func(c context.Context, azureEvent *eventhub.Event) error {
@@ -213,7 +211,7 @@ func (s *AzureDispatcher) subscribe(ctx context.Context, channel eventingchannel
 		)
 	}
 
-	// listen to each partition of the Event Hub
+	// listen to each partition of the Event Hub.
 	runtimeInfo, err := session.AzureEventHubClient.Hub.GetRuntimeInformation(ctx)
 	if err != nil {
 		return fmt.Errorf("GetRuntimeInformation failed: %v", err)
@@ -228,14 +226,10 @@ func (s *AzureDispatcher) subscribe(ctx context.Context, channel eventingchannel
 	return nil
 }
 
-// should be called only while holding subscriptionsMux
-func (s *AzureDispatcher) unsubscribe(ctx context.Context, channel eventingchannels.ChannelReference, subscription subscriptionReference) error {
+// should be called only while holding subscriptionsMux.
+func (s *AzureDispatcher) unsubscribe(channel eventingchannels.ChannelReference, subscription subscriptionReference) {
 	s.logger.Info("Unsubscribe from channel:", zap.Any("channel", channel), zap.Any("subscription", subscription))
-
-	if _, ok := s.subscriptions[channel][subscription]; ok {
-		delete(s.subscriptions[channel], subscription)
-	}
-	return nil
+	delete(s.subscriptions[channel], subscription)
 }
 
 func (s *AzureDispatcher) getHostToChannelMap() map[string]eventingchannels.ChannelReference {
@@ -287,12 +281,12 @@ func (s *AzureDispatcher) getChannelReferenceFromHost(host string) (eventingchan
 	chMap := s.getHostToChannelMap()
 	cr, ok := chMap[host]
 	if !ok {
-		return cr, fmt.Errorf("Invalid HostName:%q. HostName not found in any of the watched azure channels", host)
+		return cr, fmt.Errorf("invalid HostName:%q. HostName not found in any of the watched azure channels", host)
 	}
 	return cr, nil
 }
 
-//AzureSessionExist checks if azure session exists
+// AzureSessionExist checks if azure session exists.
 func (s *AzureDispatcher) AzureSessionExist(ctx context.Context, channel *v1alpha1.AzureChannel) bool {
 	s.mux.Lock()
 	defer s.mux.Unlock()
@@ -301,7 +295,7 @@ func (s *AzureDispatcher) AzureSessionExist(ctx context.Context, channel *v1alph
 	return present
 }
 
-//CreateAzureSession creates azure session
+// CreateAzureSession creates azure session.
 func (s *AzureDispatcher) CreateAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel, secret *corev1.Secret) error {
 	if s.AzureSessionExist(ctx, channel) {
 		return nil
@@ -327,14 +321,12 @@ func (s *AzureDispatcher) CreateAzureSession(ctx context.Context, channel *v1alp
 	return nil
 }
 
-//DeleteAzureSession removes azure session
+// DeleteAzureSession removes azure session.
 func (s *AzureDispatcher) DeleteAzureSession(ctx context.Context, channel *v1alpha1.AzureChannel) {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	cRef := eventingchannels.ChannelReference{Namespace: channel.Namespace, Name: channel.Name}
-	if _, present := s.azureSessions[cRef]; present {
-		delete(s.azureSessions, cRef)
-	}
+	delete(s.azureSessions, cRef)
 }
 
 func (s *AzureDispatcher) newClient(ctx context.Context, hubName, region string, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
@@ -343,7 +335,7 @@ func (s *AzureDispatcher) newClient(ctx context.Context, hubName, region string,
 	logger.Info("Creating new Azure Eventhub Client")
 
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return nil, fmt.Errorf("credentials data is nil")
 	}
 
 	subscriptionID, present := creds.Data["subscription_id"]

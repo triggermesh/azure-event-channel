@@ -38,7 +38,7 @@ type DispatcherArgs struct {
 	Image               string
 }
 
-// MakeDispatcher generates the dispatcher deployment for the Azure channel
+// MakeDispatcher generates the dispatcher deployment for the Azure channel.
 func MakeDispatcher(args DispatcherArgs) *appsv1.Deployment {
 	replicas := int32(1)
 

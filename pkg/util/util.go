@@ -35,7 +35,7 @@ type AzureEventHubClient struct {
 	Hub             *eventhubs.Hub
 }
 
-//Connect establishes connection with Azure
+// Connect establishes connection with Azure.
 func Connect(ctx context.Context, subscriptionID, tenantID, clientID, clientSecret string) (*AzureEventHubClient, error) {
 
 	settings := auth.EnvironmentSettings{
@@ -59,7 +59,7 @@ func Connect(ctx context.Context, subscriptionID, tenantID, clientID, clientSecr
 	groupsClient := resources.NewGroupsClient(settings.GetSubscriptionID())
 	hubClient := eventhub.NewEventHubsClient(settings.GetSubscriptionID())
 
-	// create an authorizer from env vars or Azure Managed Service Idenity
+	// create an authorizer from env vars or Azure Managed Service Idenity.
 	authorizer, err := settings.GetAuthorizer()
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func (conn *AzureEventHubClient) CreateOrUpdateHub(ctx context.Context, name, re
 }
 
 // DeleteHub deletes whole group that results in deletion of hub, namespace and group
-// this is implemented for consistency reasons. Deletion usually takes sometime to complete
+// this is implemented for consistency reasons. Deletion usually takes sometime to complete.
 func (conn *AzureEventHubClient) DeleteHub(ctx context.Context, name string) error {
 	future, err := conn.GroupClient.Delete(ctx, name)
 

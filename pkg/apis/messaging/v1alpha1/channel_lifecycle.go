@@ -94,7 +94,7 @@ func (cs *AzureChannelStatus) SetAddress(url *apis.URL) {
 }
 
 // TODO: Unify this with the ones from Eventing. Say: Broker, Trigger.
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// PropagateDispatcherStatus marks channel dispatcher ready status failed.
 func (cs *AzureChannelStatus) PropagateDispatcherStatus(ds *appsv1.DeploymentStatus) {
 	for _, cond := range ds.Conditions {
 		if cond.Type == appsv1.DeploymentAvailable {
@@ -107,55 +107,57 @@ func (cs *AzureChannelStatus) PropagateDispatcherStatus(ds *appsv1.DeploymentSta
 	}
 }
 
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// MarkDispatcherFailed marks dispatcher ready status failed.
 func (cs *AzureChannelStatus) MarkDispatcherFailed(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkFalse(AzureChannelConditionDispatcherReady, reason, messageFormat, messageA...)
 }
 
+// MarkDispatcherUnknown marks dispatcher ready status unknown.
 func (cs *AzureChannelStatus) MarkDispatcherUnknown(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkUnknown(AzureChannelConditionDispatcherReady, reason, messageFormat, messageA...)
 }
 
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// MarkServiceFailed marks service ready status failed.
 func (cs *AzureChannelStatus) MarkServiceFailed(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkFalse(AzureChannelConditionServiceReady, reason, messageFormat, messageA...)
 }
 
+// MarkServiceUnknown marks service ready status unknown.
 func (cs *AzureChannelStatus) MarkServiceUnknown(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkUnknown(AzureChannelConditionServiceReady, reason, messageFormat, messageA...)
 }
 
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// MarkServiceTrue marks service ready status true.
 func (cs *AzureChannelStatus) MarkServiceTrue() {
 	ac.Manage(cs).MarkTrue(AzureChannelConditionServiceReady)
 }
 
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// MarkChannelServiceFailed marks channel service ready status failed.
 func (cs *AzureChannelStatus) MarkChannelServiceFailed(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkFalse(AzureChannelConditionChannelServiceReady, reason, messageFormat, messageA...)
 }
 
-//MarkDispatcherFailed marks channel dispatcher ready status failed
+// MarkChannelServiceTrue marks channel service ready status true.
 func (cs *AzureChannelStatus) MarkChannelServiceTrue() {
 	ac.Manage(cs).MarkTrue(AzureChannelConditionChannelServiceReady)
 }
 
-//MarkEndpointsFailed marks channel endpoints ready status False
+// MarkEndpointsFailed marks endpoints ready status False.
 func (cs *AzureChannelStatus) MarkEndpointsFailed(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkFalse(AzureChannelConditionEndpointsReady, reason, messageFormat, messageA...)
 }
 
-//MarkEndpointsTrue marks channel endpoints ready status True
+// MarkEndpointsTrue marks endpoints ready status True.
 func (cs *AzureChannelStatus) MarkEndpointsTrue() {
 	ac.Manage(cs).MarkTrue(AzureChannelConditionEndpointsReady)
 }
 
-//MarkHubFailed marks channel ready status False
+// MarkHubFailed marks hub ready status False.
 func (cs *AzureChannelStatus) MarkHubFailed(reason, messageFormat string, messageA ...interface{}) {
 	ac.Manage(cs).MarkFalse(AzureChannelConditionHubReady, reason, messageFormat, messageA...)
 }
 
-//MarkHubTrue marks channel ready status True
+// MarkHubTrue marks hub ready status True.
 func (cs *AzureChannelStatus) MarkHubTrue() {
 	ac.Manage(cs).MarkTrue(AzureChannelConditionHubReady)
 }

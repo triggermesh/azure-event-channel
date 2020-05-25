@@ -26,7 +26,6 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,12 +63,6 @@ import (
 )
 
 const (
-	// controllerAgentName is the string used by this controller to identify
-	// itself when creating events.
-	controllerAgentName = "azure-ch-controller"
-
-	finalizerName = controllerAgentName
-
 	dispatcherDeploymentCreated     = "DispatcherDeploymentCreated"
 	dispatcherDeploymentUpdated     = "DispatcherDeploymentUpdated"
 	dispatcherDeploymentFailed      = "DispatcherDeploymentFailed"
@@ -77,11 +70,6 @@ const (
 	dispatcherServiceFailed         = "DispatcherServiceFailed"
 	dispatcherServiceAccountCreated = "DispatcherServiceAccountCreated"
 	dispatcherRoleBindingCreated    = "DispatcherRoleBindingCreated"
-
-	// Name of the corev1.Events emitted from the reconciliation process.
-	channelReconciled         = "ChannelReconciled"
-	channelReconcileFailed    = "ChannelReconcileFailed"
-	channelUpdateStatusFailed = "ChannelUpdateStatusFailed"
 )
 
 type envConfig struct {
@@ -254,7 +242,7 @@ func (r *Reconciler) reconcile(ctx context.Context, ac *v1alpha1.AzureChannel) e
 	logger := logging.FromContext(ctx)
 
 	// set channelable version annotation
-	err := r.setAnnotations(ctx, ac)
+	err := r.setAnnotations(ac)
 	if err != nil {
 		return fmt.Errorf("channel annotations update: %s", err)
 	}
@@ -320,12 +308,12 @@ func (r *Reconciler) reconcile(ctx context.Context, ac *v1alpha1.AzureChannel) e
 		if err := createHub(ctx, ac.Spec.EventHubName, ac.Spec.EventHubRegion, azureClient); err != nil {
 			return err
 		}
-		ticker := time.NewTicker(time.Duration(3 * time.Minute))
+		ticker := time.NewTicker(3 * time.Minute)
 		defer ticker.Stop()
 		select {
 		case <-ticker.C:
 			ctx.Done()
-			return fmt.Errorf("Stream didn't switch to active state in time")
+			return fmt.Errorf("stream didn't switch to active state in time")
 		default:
 			for {
 				model, err := azureClient.HubClient.Get(ctx, ac.Spec.EventHubName, ac.Spec.EventHubName, ac.Spec.EventHubName)
@@ -343,7 +331,7 @@ func (r *Reconciler) reconcile(ctx context.Context, ac *v1alpha1.AzureChannel) e
 	return nil
 }
 
-func (r *Reconciler) setAnnotations(ctx context.Context, ac *v1alpha1.AzureChannel) error {
+func (r *Reconciler) setAnnotations(ac *v1alpha1.AzureChannel) error {
 	annotations := ac.GetAnnotations()
 	if annotations == nil {
 		annotations = make(map[string]string)
@@ -368,10 +356,9 @@ func (r *Reconciler) reconcileServiceAccount(ctx context.Context, ac *v1alpha1.A
 			if err == nil {
 				controller.GetEventRecorder(ctx).Event(ac, corev1.EventTypeNormal, dispatcherServiceAccountCreated, "Dispatcher service account created")
 				return sa, nil
-			} else {
-				ac.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher service account: %v", err)
-				return sa, newServiceAccountWarn(err)
 			}
+			ac.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher service account: %v", err)
+			return sa, newServiceAccountWarn(err)
 		}
 
 		ac.Status.MarkDispatcherUnknown("DispatcherServiceAccountFailed", "Failed to get dispatcher service account: %v", err)
@@ -387,7 +374,7 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, ac *v1alpha1.Azure
 		return nil, err
 	}
 
-	_, err = r.reconcileRoleBinding(ctx, dispatcherName, ac, dispatcherName, sa)
+	err = r.reconcileRoleBinding(ctx, dispatcherName, ac, dispatcherName, sa)
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +384,7 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, ac *v1alpha1.Azure
 	// subject in the dispatcher's namespace.
 	// TODO: might change when ConfigMapPropagation lands
 	roleBindingName := fmt.Sprintf("%s-%s", dispatcherName, ac.GetNamespace())
-	_, err = r.reconcileRoleBinding(ctx, roleBindingName, ac, "eventing-config-reader", sa)
+	err = r.reconcileRoleBinding(ctx, roleBindingName, ac, "eventing-config-reader", sa)
 	if err != nil {
 		return nil, err
 	}
@@ -415,10 +402,9 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, ac *v1alpha1.Azure
 				controller.GetEventRecorder(ctx).Event(ac, corev1.EventTypeNormal, dispatcherDeploymentCreated, "Dispatcher deployment created")
 				ac.Status.PropagateDispatcherStatus(&d.Status)
 				return d, err
-			} else {
-				ac.Status.MarkDispatcherFailed(dispatcherDeploymentFailed, "Failed to create the dispatcher deployment: %v", err)
-				return d, newDeploymentWarn(err)
 			}
+			ac.Status.MarkDispatcherFailed(dispatcherDeploymentFailed, "Failed to create the dispatcher deployment: %v", err)
+			return d, newDeploymentWarn(err)
 		}
 
 		logging.FromContext(ctx).Error("Unable to get the dispatcher deployment", zap.Error(err))
@@ -431,9 +417,8 @@ func (r *Reconciler) reconcileDispatcher(ctx context.Context, ac *v1alpha1.Azure
 			controller.GetEventRecorder(ctx).Event(ac, corev1.EventTypeNormal, dispatcherDeploymentUpdated, "Dispatcher deployment updated")
 			ac.Status.PropagateDispatcherStatus(&d.Status)
 			return d, nil
-		} else {
-			ac.Status.MarkServiceFailed("DispatcherDeploymentUpdateFailed", "Failed to update the dispatcher deployment: %v", err)
 		}
+		ac.Status.MarkServiceFailed("DispatcherDeploymentUpdateFailed", "Failed to update the dispatcher deployment: %v", err)
 		return d, newDeploymentWarn(err)
 	}
 
@@ -469,25 +454,24 @@ func (r *Reconciler) reconcileDispatcherService(ctx context.Context, ac *v1alpha
 	return svc, nil
 }
 
-func (r *Reconciler) reconcileRoleBinding(ctx context.Context, name string, ac *v1alpha1.AzureChannel, clusterRoleName string, sa *corev1.ServiceAccount) (*rbacv1.RoleBinding, error) {
+func (r *Reconciler) reconcileRoleBinding(ctx context.Context, name string, ac *v1alpha1.AzureChannel, clusterRoleName string, sa *corev1.ServiceAccount) error {
 	ns := ac.GetNamespace()
-	rb, err := r.roleBindingLister.RoleBindings(ns).Get(name)
+	_, err := r.roleBindingLister.RoleBindings(ns).Get(name)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			expected := resources.MakeRoleBinding(ns, name, sa, clusterRoleName)
-			rb, err := r.KubeClientSet.RbacV1().RoleBindings(ns).Create(expected)
+			_, err := r.KubeClientSet.RbacV1().RoleBindings(ns).Create(expected)
 			if err == nil {
 				controller.GetEventRecorder(ctx).Event(ac, corev1.EventTypeNormal, dispatcherRoleBindingCreated, "Dispatcher role binding created")
-				return rb, nil
-			} else {
-				ac.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher role binding: %v", err)
-				return rb, newRoleBindingWarn(err)
+				return nil
 			}
+			ac.Status.MarkDispatcherFailed("DispatcherDeploymentFailed", "Failed to create the dispatcher role binding: %v", err)
+			return newRoleBindingWarn(err)
 		}
 		ac.Status.MarkDispatcherUnknown("DispatcherRoleBindingFailed", "Failed to get dispatcher role binding: %v", err)
-		return nil, newRoleBindingWarn(err)
+		return newRoleBindingWarn(err)
 	}
-	return rb, err
+	return err
 }
 
 func (r *Reconciler) reconcileChannelService(ctx context.Context, channel *v1alpha1.AzureChannel) (*corev1.Service, error) {
@@ -537,7 +521,7 @@ func (r *Reconciler) reconcileChannelService(ctx context.Context, channel *v1alp
 
 func connect(ctx context.Context, creds *corev1.Secret) (*util.AzureEventHubClient, error) {
 	if creds == nil {
-		return nil, fmt.Errorf("Credentials data is nil")
+		return nil, fmt.Errorf("credentials data is nil")
 	}
 
 	subscriptionID, present := creds.Data["subscription_id"]
