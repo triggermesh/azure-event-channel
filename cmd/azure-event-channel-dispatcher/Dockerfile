@@ -10,7 +10,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN BIN_OUTPUT_DIR=/bin make dispatcher && \
+RUN BIN_OUTPUT_DIR=/bin make azure-event-channel-dispatcher && \
     rm -rf ${GOPATH} && \
     rm -rf ${HOME}/.cache
 
@@ -24,6 +24,6 @@ LABEL summary "Triggermesh Channel Dispatcher for Azure Events"
 LABEL description "This is the Triggermesh Knative Channel Dispatcher for Azure Events"
 
 COPY LICENSE /LICENSE
-COPY --from=builder /bin/azure-event-channel-dispatcher /azure-event-channel-dispatcher
+COPY --from=builder /bin/azure-event-channel-dispatcher /
 
 ENTRYPOINT ["/azure-event-channel-dispatcher"]
