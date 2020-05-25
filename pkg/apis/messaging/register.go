@@ -16,7 +16,7 @@ limitations under the License.
 
 package messaging
 
-// GroupName is the group name used in this package
+// GroupName is the group name used in this package.
 const (
 	GroupName = "messaging.triggermesh.dev"
 )

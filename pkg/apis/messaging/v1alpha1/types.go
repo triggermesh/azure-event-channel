@@ -30,7 +30,7 @@ import (
 // +genreconciler
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// AzureChannel is a specification for a AzureChannel resource
+// AzureChannel is a specification for a AzureChannel resource.
 type AzureChannel struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -44,7 +44,7 @@ var _ apis.Validatable = (*AzureChannel)(nil)
 var _ apis.Defaultable = (*AzureChannel)(nil)
 var _ runtime.Object = (*AzureChannel)(nil)
 
-// AzureChannelSpec is the spec for a AzureChannel resource
+// AzureChannelSpec is the spec for a AzureChannel resource.
 type AzureChannelSpec struct {
 	eventingduckv1beta1.SubscribableSpec `json:",inline"`
 	EventHubName                         string `json:"event_hub_name"`
@@ -52,7 +52,7 @@ type AzureChannelSpec struct {
 	SecretName                           string `json:"secret_name"`
 }
 
-// AzureChannelStatus is the status for a AzureChannel resource
+// AzureChannelStatus is the status for a AzureChannel resource.
 type AzureChannelStatus struct {
 	// inherits duck/v1beta1 Status, which currently provides:
 	// * ObservedGeneration - the 'Generation' of the Service that was last processed by the controller.
@@ -72,7 +72,7 @@ type AzureChannelStatus struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// AzureChannelList is a list of AzureChannel resources
+// AzureChannelList is a list of AzureChannel resources.
 type AzureChannelList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`
@@ -80,7 +80,7 @@ type AzureChannelList struct {
 	Items []AzureChannel `json:"items"`
 }
 
-// GetGroupVersionKind returns GroupVersionKind for AzureChannels
+// GetGroupVersionKind returns GroupVersionKind for AzureChannels.
 func (c *AzureChannel) GetGroupVersionKind() schema.GroupVersionKind {
 	return SchemeGroupVersion.WithKind("AzureChannel")
 }

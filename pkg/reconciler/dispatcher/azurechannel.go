@@ -60,8 +60,6 @@ const (
 
 	finalizerName = controllerAgentName
 
-	channelReconciled         = "ChannelReconciled"
-	channelReconcileFailed    = "ChannelReconcileFailed"
 	channelUpdateStatusFailed = "ChannelUpdateStatusFailed"
 )
 
@@ -140,7 +138,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	}
 
 	if !original.Status.IsReady() {
-		return fmt.Errorf("Channel is not ready. Cannot configure and update subscriber status")
+		return fmt.Errorf("channel is not ready. Cannot configure and update subscriber status")
 	}
 
 	// Don't modify the informers copy.
@@ -154,7 +152,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, key string) error {
 	}
 
 	// TODO: Should this check for subscribable status rather than entire status?
-	if _, updateStatusErr := r.updateStatus(ctx, azureChannel); updateStatusErr != nil {
+	if _, updateStatusErr := r.updateStatus(azureChannel); updateStatusErr != nil {
 		logging.FromContext(ctx).Error("Failed to update AzureChannel status", zap.Error(updateStatusErr))
 		r.recorder.Eventf(azureChannel, corev1.EventTypeWarning, channelUpdateStatusFailed, "Failed to update KinesisChannel's status: %v", updateStatusErr)
 		return updateStatusErr
@@ -254,7 +252,8 @@ func (r *Reconciler) createSubscribableStatus(subscribable eventingduckv1beta1.S
 		Subscribers: subscriberStatus,
 	}
 }
-func (r *Reconciler) updateStatus(ctx context.Context, desired *v1alpha1.AzureChannel) (*v1alpha1.AzureChannel, error) {
+
+func (r *Reconciler) updateStatus(desired *v1alpha1.AzureChannel) (*v1alpha1.AzureChannel, error) {
 	nc, err := r.azurechannelLister.AzureChannels(desired.Namespace).Get(desired.Name)
 	if err != nil {
 		return nil, err
