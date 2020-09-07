@@ -1,6 +1,6 @@
 module github.com/triggermesh/azure-event-channel
 
-go 1.14
+go 1.15
 
 replace (
 	k8s.io/api => k8s.io/api v0.16.8
