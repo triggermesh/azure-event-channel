@@ -1,6 +1,6 @@
 steps:
 
-- name: 'gcr.io/kaniko-project/executor:latest'
+- name: 'gcr.io/kaniko-project/executor:v1.6.0-debug'
   args:
   - --dockerfile=cmd/azure-event-channel-dispatcher/Dockerfile
   - --destination=gcr.io/$PROJECT_ID/azure-event-channel-dispatcher:${COMMIT_SHA}
@@ -13,7 +13,7 @@ steps:
   - ${_KANIKO_EXTRA_ARGS}
   waitFor: ['-']
 
-- name: 'gcr.io/kaniko-project/executor:latest'
+- name: 'gcr.io/kaniko-project/executor:v1.6.0-debug'
   args:
   - --dockerfile=cmd/azure-event-channel-controller/Dockerfile
   - --destination=gcr.io/$PROJECT_ID/azure-event-channel-controller:${COMMIT_SHA}
